@@ -1,134 +1,237 @@
-import { renderAdmin, adminAction, adminSubmit } from './admin.js?v=20260923f';
-import { portalRoutes, publicRoutes, portalShell, portalFooter, publicShell, renderPortalPage } from './portal.js?v=20260923f';
-import { createDraft, noteKeyFor, parsePending, pendingKeyFor } from './checkout-state.js?v=20260923f';
+import { renderAdmin } from './admin.js?v=20260928a';
+import {
+    portalRoutes,
+    publicRoutes,
+    portalShell,
+    portalFooter,
+    publicShell,
+    renderPortalPage,
+} from './portal.js?v=20260928a';
+import {
+    api,
+    brand,
+    closeModal,
+    esc,
+    go,
+    refreshCart,
+    setSameRouteHandler,
+    setUnauthorizedHandler,
+    state,
+} from './app-core.js?v=20260928a';
+import { renderAuth } from './auth-view.js?v=20260928a';
+import { renderCatalogPage } from './catalog.js?v=20260928a';
+import {
+    clearCheckoutSession,
+    renderCartPage,
+} from './checkout.js?v=20260928a';
+import { bindAppEvents } from './app-events.js?v=20260928a';
+import { renderOrdersPage } from './orders.js?v=20260928a';
 
-const paths={home:['Ana sayfa','home'],catalog:['Arama','grid'],cart:['Sepetim','cart'],orders:['Siparişlerim','box'],admin:['Genel bakış','chart'],'admin-products':['Ürün yönetimi','grid'],'admin-product':['Ürün bilgileri','grid'],'admin-users':['Bayiler','users'],'admin-orders':['Sipariş yönetimi','box'],'admin-grid':['Katalog düzeni','sliders'],'admin-banners':['Duyurular','banner']};
-Object.assign(paths, portalRoutes);
-const drawings={home:'M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z',grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',cart:'M2 3h3l3 12h10l3-9H6 M9 20h.01 M18 20h.01 M12 8v5m-2-2h4',box:'m3 7 9-4 9 4v10l-9 4-9-4Z M3 7l9 4 9-4 M12 11v10 M7 5l10 4',search:'m21 21-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',arrow:'M4 12h16m-6-6 6 6-6 6',chevron:'m9 5 7 7-7 7',logout:'M9 4H4v16h5 M11 12h10m-4-4 4 4-4 4',users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 4a4 4 0 0 1 0 7 M20 21v-2a4 4 0 0 0-3-4',chart:'M4 3v18h17 M8 16v-5m5 5V7m5 9v-8',sliders:'M4 7h5m4 0h7 M4 17h11m4 0h1 M9 4v6 M15 14v6',banner:'M3 4h18v16H3z M3 14l5-5 5 6 3-3 5 6 M16 8h.01',plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',check:'m5 12 4 4L19 6',trash:'M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7m4-7v7',edit:'m15 4 5 5 M3 21l5-1L21 7l-5-5L3 15Z',menu:'M4 6h16M4 12h16M4 18h16',shield:'m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z m-4 9 3 3 5-6',download:'M12 3v12m-5-5 5 5 5-5 M4 17v4h16v-4',refresh:'M20 11a8 8 0 1 0-2 7 M20 4v7h-7',mail:'M3 5h18v14H3z M3 5l9 7 9-7'};
-Object.assign(drawings, {more:'M5 12h.01M12 12h.01M19 12h.01',down:'m6 9 6 6 6-6',card:'M3 5h18v14H3z M3 10h18 M7 15h3',bank:'m3 8 9-5 9 5H3 M5 11v7m7-7v7m7-7v7M3 21h18',help:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20 M9 8a3 3 0 0 1 6 0c0 2-3 2-3 5 M12 17h.01'});
-export const icon=n=>`<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="${drawings[n]||drawings.box}"/></svg>`;
-export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export const money=v=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',minimumFractionDigits:2}).format(v||0);
-export const date=v=>new Date(v.endsWith('Z')?v:v+'Z').toLocaleDateString('tr-TR',{day:'2-digit',month:'short',year:'numeric'});
-export const state={user:null,meta:null,cart:{items:[],total:0,count:0},route:'home',params:new URLSearchParams(),filters:{q:'',category:'',brand:'',stock:'',sort:'',page:1},bannerId:null,products:[]};
-let csrf='',renderVersion=0,searchTimer;
-const normalize=v=>Array.isArray(v)?v.map(normalize):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k[0].toLowerCase()+k.slice(1),normalize(x)])):v;
-const fetchSafe=async(...args)=>{try{return await fetch(...args)}catch{throw new Error('Sunucuya ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.')}};
-export async function api(path,options={}){
-    const headers={...options.headers};
-    if(options.body && !(options.body instanceof FormData)){headers['Content-Type']='application/json';options.body=JSON.stringify(options.body)}
-    if(options.method && options.method!=='GET'){if(!csrf)csrf=(await fetchSafe('/api/csrf').then(r=>r.json())).token;headers['X-CSRF-TOKEN']=csrf}
-    const response=await fetchSafe('/api'+path,{...options,headers});
-    const data=await response.text();let json;try{json=data?normalize(JSON.parse(data)):null}catch{json=null}
-    if(!response.ok){if(response.status===401 && !path.startsWith('/auth/')){clearCheckoutSession();state.user=null;location.hash='login'}const error=new Error(json?.message||(response.status===429?'Çok fazla deneme yaptınız. Bir dakika sonra tekrar deneyin.':response.status===403?'Bu işlem için yetkiniz yok.':'İşlem tamamlanamadı. Tekrar deneyin.'));error.status=response.status;error.code=json?.code;throw error}
-    return json;
-}
-export function toast(text,error=false){const el=document.createElement('div');el.className='toast'+(error?' error':'');el.textContent=text;document.querySelector('#toasts').append(el);setTimeout(()=>el.remove(),4500)}
-export function go(route){if(location.hash==='#'+route)render();else location.hash=route}
-const brand=()=>`<a class="brand" href="#home" aria-label="U1 Business ana sayfa"><img class="brand-mark" src="/images/brand.svg" width="42" height="42" alt=""><span class="brand-name">u1<span class="wordmark-weight">business</span><small>BAYİ PORTALI</small></span></a>`;
-export const status=s=>`<span class="status-badge ${s==='Onaylandı'?'approved':s==='Reddedildi'?'rejected':'pending'}">${esc(s)}</span>`;
-export const stock=p=>`<span class="stock ${p.stock===0?'empty':p.stock<=p.criticalStock?'critical':''}">${p.stock===0?'Yok':p.stock<=p.criticalStock?'Kritik':'Var'}</span>`;
-export const thumb=p=>`<img class="product-thumb" src="${esc(p.imageUrl||'/images/product.svg')}" alt="${esc(p.name)}" loading="lazy">`;
-export const heading=(title,desc,actions='')=>`<div class="pagehead"><div><div class="eyebrow">${state.route.startsWith('admin')?'YÖNETİM MERKEZİ':'BAYİ PORTALI'}</div><h1>${title}</h1>${desc?`<p>${desc}</p>`:''}</div><div class="heading-actions">${actions}</div></div>`;
-export const empty=(title,desc,action='')=>`<div class="empty-state">${icon('box')}<h3>${title}</h3><p>${desc}</p>${action}</div>`;
-export function field(label,name,value='',type='text',attrs=''){if(name==='stock')attrs=attrs.replace('max="1000000"','max="2147483647"');return `<div class="field"><label for="field-${name}">${label}</label><input class="input" id="field-${name}" name="${name}" type="${type}" value="${esc(value)}" ${attrs}></div>`}
-export const pager=(total,page=1)=>`<div class="table-footer"><span>${total?`${(page-1)*20+1}–${Math.min(page*20,total)} / ${total} kayıt`:'0 kayıt'}</span><div class="pages"><button data-action="page" data-page="${page-1}" ${page<=1?'disabled':''} aria-label="Önceki sayfa">‹</button><span>${page}</span><button data-action="page" data-page="${page+1}" ${page*20>=total?'disabled':''} aria-label="Sonraki sayfa">›</button></div></div>`;
-export function formData(form){return Object.fromEntries(new FormData(form))}
-export function modal(title,body){const d=document.querySelector('#dialog');d.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2><button class="icon-button" data-action="close" aria-label="Pencereyi kapat">${icon('close')}</button></div><div class="dialog-body">${body}</div>`;if(!d.open)d.showModal()}
-export function closeModal(){document.querySelector('#dialog').close();if(checkoutApproval?.status==='draft')checkoutApproval=null}
-export async function refreshCart(){state.cart=await api('/cart');document.querySelectorAll('[data-cart-count]').forEach(e=>e.textContent=state.cart.count);document.querySelectorAll('[data-cart-total]').forEach(e=>e.textContent=money(state.cart.total))}
-let checkoutApproval=null;
-const pendingKey=()=>pendingKeyFor(state.user.id);
-const noteKey=()=>noteKeyFor(state.user.id);
-function draftNote(){return state.user?sessionStorage.getItem(noteKey())??'':''}
-function saveNote(value){if(state.user)sessionStorage.setItem(noteKey(),value)}
-function storedApproval(){return state.user?parsePending(sessionStorage.getItem(pendingKey())):null}
-function saveApproval(value){checkoutApproval=value;if(value)sessionStorage.setItem(pendingKey(),JSON.stringify(value));else if(state.user)sessionStorage.removeItem(pendingKey())}
-function clearCheckoutSession(){if(!state.user)return;sessionStorage.removeItem(pendingKey());sessionStorage.removeItem(noteKey());checkoutApproval=null}
-function checkoutDialog(approval,previousApproval=null){const pending=approval.status!=='draft';const total=approval.lines.reduce((sum,line)=>sum+Math.round(line.unitPrice*100)*line.quantity,0)/100;const previousTotal=previousApproval?.lines.reduce((sum,line)=>sum+Math.round(line.unitPrice*100)*line.quantity,0)/100;const changes=previousApproval?[...approval.lines.filter(line=>{const old=previousApproval.lines.find(x=>x.productId===line.productId);return !old||old.quantity!==line.quantity||old.unitPrice!==line.unitPrice}).map(line=>`${line.name}: ${line.quantity} adet · ${money(line.unitPrice)}`),...previousApproval.lines.filter(line=>!approval.lines.some(x=>x.productId===line.productId)).map(line=>`${line.name}: sepetten çıkarıldı`)]:[];modal(pending?'Önceki siparişi sorgula':previousApproval?'Sepet değişti, yeniden onaylayın':'Siparişinizi onaylayın',`<div class="notice" role="status">${pending?'Önceki sipariş isteğinin sonucu bilinmiyor. Aynı istek yeniden sorgulanacak; yeni sipariş başlatılmayacak.':previousApproval?`Önceki onay geçersiz. Önceki toplam ${money(previousTotal)}; güncel sepeti inceleyin.${changes.length?`<ul>${changes.map(change=>`<li>${esc(change)}</li>`).join('')}</ul>`:''}`:'Aşağıdaki ürün, adet ve fiyatları onaylayın.'}</div><div class="table-scroll"><table class="data-table"><thead><tr><th>Ürün</th><th>Adet</th><th>Birim fiyat</th></tr></thead><tbody>${approval.lines.map(line=>`<tr><td>${esc(line.name)}</td><td>${line.quantity}</td><td>${money(line.unitPrice)}</td></tr>`).join('')}</tbody></table></div><div class="summary-row summary-total"><span>${previousApproval?'Yeni toplam':'Toplam'}</span><span>${money(total)}</span></div><form data-form="checkout" data-request-id="${approval.requestId}"><div class="form-actions"><button type="button" class="button" data-action="close">Geri dön</button><button class="button primary" type="submit">${icon('check')} ${pending?'Önceki siparişi sorgula':'Siparişi oluştur'}</button></div></form>`)}
-async function openCheckout(note,changed=false,previousApproval=null){await refreshCart();const pending=changed?null:storedApproval();if(!state.cart.items.length&&!pending){closeModal();await render();toast('Sepetiniz boş.',true);return}const approval=pending||createDraft(state.cart,note,crypto.randomUUID());checkoutApproval=approval;checkoutDialog(approval,previousApproval)}
-function shell(){return portalShell(paths,brand)}
+const ROUTES = {
+    home: ['Ana sayfa', 'home'],
+    catalog: ['Arama', 'grid'],
+    cart: ['Sepetim', 'cart'],
+    orders: ['Siparişlerim', 'box'],
+    admin: ['Genel bakış', 'chart'],
+    'admin-products': ['Ürün yönetimi', 'grid'],
+    'admin-product': ['Ürün bilgileri', 'grid'],
+    'admin-users': ['Bayiler', 'users'],
+    'admin-orders': ['Sipariş yönetimi', 'box'],
+    'admin-grid': ['Katalog düzeni', 'sliders'],
+    'admin-banners': ['Duyurular', 'banner'],
+    ...portalRoutes,
+};
 
-function auth(register=false){return `<div class="auth"><section class="auth-art">${brand()}<div class="auth-statement"><div class="eyebrow">PROFESYONELLER İÇİN TEDARİK</div><h1>Bayi sipariş<br><em>platformu.</em></h1><p>Otomotiv elektroniği ve servis ekipmanlarına ulaşmanın daha kolay yolu.</p></div><div class="auth-bottom"><div><b>01</b>Ürününü bul</div><div><b>02</b>Siparişini oluştur</div><div><b>03</b>İşine odaklan</div></div></section><main class="auth-form-area" id="main" tabindex="-1"><form class="auth-form" data-form="${register?'register':'login'}"><div class="eyebrow">U1 BUSINESS'A HOŞ GELDİNİZ</div><h2>${register?'Bayi hesabı oluşturun.':'Bayi girişi'}</h2><p>${register?'Firma bilgilerinizi girerek hemen başlayın.':'Devam etmek için hesabınıza giriş yapın.'}</p>${register?`<div class="form-grid">${field('Ad','firstName','','text','required maxlength="80" autocomplete="given-name"')}${field('Soyad','lastName','','text','required maxlength="80" autocomplete="family-name"')}</div>${field('Firma adı','company','','text','maxlength="180" autocomplete="organization"')}${field('Telefon','phone','','tel','required maxlength="25" autocomplete="tel" placeholder="0532 123 45 67"')}`:''}${field('E-posta adresi','email','','email','required maxlength="200" autocomplete="username" placeholder="ornek@firmaniz.com"')}${field('Şifre','password','','password',`required minlength="${register?10:1}" maxlength="128" autocomplete="${register?'new-password':'current-password'}" placeholder="${register?'En az 10 karakter':'Şifrenizi girin'}"`)}<div id="auth-error" class="auth-error" role="alert"></div><button class="button primary" type="submit">${register?'Hesap oluştur':'Giriş yap'} ${icon('arrow')}</button><div class="auth-switch">${register?'Zaten hesabınız var mı?':'Henüz bayi hesabınız yok mu?'}<a href="#${register?'login':'register'}">${register?'Giriş yapın':'Hesap oluşturun'}</a></div><div class="auth-demo">U1 Business · Güvenli bayi erişimi<br>Hesap erişimi için firma yöneticinizle iletişime geçin.</div></form></main></div>`}
-function selectedBanner(){const items=state.meta?.banners||[];const current=Math.max(0,items.findIndex(b=>b.id===state.bannerId));state.bannerId=items[current]?.id??null;return {items,current,b:items[current]}}
-function banner(){const {items,current,b}=selectedBanner();return b?`<section class="banner bulletin" aria-label="Duyurular"><div class="bulletin-label"><span>DUYURULAR</span><b>${String(current+1).padStart(2,'0')}<small> / ${String(items.length).padStart(2,'0')}</small></b></div><div class="bulletin-copy" aria-live="polite"><h2>${esc(b.title)}</h2><p>${esc(b.subtitle)}</p></div><button class="button bulletin-link" data-action="banner-go">${esc(b.buttonText)} ${icon('arrow')}</button><div class="banner-controls">${items.map((_,i)=>`<button class="${i===current?'active':''}" data-action="banner-slide" data-index="${i}" aria-label="${i+1}. duyuru" aria-pressed="${i===current}">${String(i+1).padStart(2,'0')}</button>`).join('')}</div></section>`:''}
-function filters(){const f=state.filters;return `<aside class="filters" aria-label="Ürün filtreleri"><div class="filter-title"><h3>Filtreler</h3><button class="text-button" data-action="clear-filters">Temizle</button></div><div class="filter-group"><h3>Kategoriler</h3><div class="category-list"><button class="category-button ${!f.category?'active':''}" data-action="category" data-id="">Tüm ürünler <small>${state.meta.categories.reduce((s,c)=>s+c.productCount,0)}</small></button>${state.meta.categories.map(c=>`<button class="category-button ${+f.category===c.id?'active':''}" data-action="category" data-id="${c.id}">${esc(c.name)}<small>${c.productCount}</small></button>`).join('')}</div></div><div class="filter-group brands-filter"><h3>Marka</h3>${state.meta.brands.map(b=>`<label class="check-label"><input type="radio" name="brand" data-filter="brand" value="${esc(b)}" ${f.brand===b?'checked':''}>${esc(b)}</label>`).join('')}<label class="check-label"><input type="radio" name="brand" data-filter="brand" value="" ${!f.brand?'checked':''}>Tüm markalar</label></div><div class="filter-group stock-filter"><h3>Stok durumu</h3><label class="check-label"><input type="checkbox" data-filter="stock" value="available" ${f.stock==='available'?'checked':''}>Yalnızca stoktakiler</label><label class="check-label"><input type="checkbox" data-filter="stock" value="critical" ${f.stock==='critical'?'checked':''}>Kritik stok</label></div><div class="filter-help"><strong>Aradığınızı hemen bulun.</strong><br>Ürün adı, marka, ürün kodu veya üretici koduyla arayabilirsiniz.</div></aside>`}
-export function quantity(p,context='catalog'){return `<div class="quantity"><button data-action="quantity" data-delta="-1" aria-label="Adedi azalt" ${p.stock===0?'disabled':''}>−</button><input type="number" min="1" max="${Math.min(p.stock,1000000)}" step="1" value="${p.quantity||1}" aria-label="${esc(p.name)} adet" data-quantity="${p.id}" data-context="${context}" ${p.stock===0?'disabled':''}><button data-action="quantity" data-delta="1" aria-label="Adedi artır" ${p.stock===0?'disabled':''}>+</button></div>`}
-const renders={text:(p,c)=>c.field==='name'?`<button class="product-name" data-action="product" data-id="${p.id}">${esc(p.name)}</button>`:esc(p[c.field]),image:p=>thumb(p),product:p=>`<button class="product-name" data-action="product" data-id="${p.id}">${esc(p.name)}</button><span class="product-meta">${esc(p.manufacturerCode)}</span>`,stock:p=>stock(p),money:p=>`<span class="money">${money(p.price)}</span>`,purchase:p=>`<div class="purchase">${quantity(p)}<button class="add-cart" data-action="add" data-id="${p.id}" ${p.stock===0?'disabled':''} aria-label="${esc(p.name)} sepete ekle">${icon('cart')}</button></div>`};
-function colClass(c){return `${c.desktop?'':'hide-desktop'} ${c.tablet?'':'hide-tablet'} ${c.mobile?'':'hide-mobile'} ${c.field==='name'?'product-cell':''}`}
-function productTable(data){const columns=state.meta.columns;return data.items.length?`<div class="table-scroll"><table class="data-table"><thead><tr>${columns.map(c=>`<th class="${colClass(c)}" style="text-align:${c.align};width:${c.width}px">${esc(c.label)}</th>`).join('')}</tr></thead><tbody>${data.items.map(p=>`<tr>${columns.map(c=>`<td class="${colClass(c)}" style="text-align:${c.align}">${(renders[c.renderType]||renders.text)(p,c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${pager(data.total,data.page)}`:empty('Eşleşen ürün bulunamadı.','Farklı bir kelime deneyin veya filtreleri temizleyin.','<button class="button" data-action="clear-filters">Filtreleri temizle</button>')}
-export async function catalog(){const f=state.route==='new-products'?{...state.filters,sort:'newest'}:state.filters;const query=new URLSearchParams(Object.entries(f).filter(([,v])=>v!==''));const data=await api('/products?'+query);state.products=data.items;
-    return `${state.route==='home'?heading(`Merhaba, ${esc(state.user.firstName)}.`,`Bugün servisiniz için neye ihtiyacınız var?`,`<a class="button" href="#orders">${icon('box')} Siparişlerim</a>`)+`<div id="banner">${banner()}</div>`:heading(state.route==='new-products'?'Yeni ürünler':'Ürün arama',state.route==='new-products'?'Kataloğa son eklenen ürünler, en yeniden eskiye.':'Ürünleri bulun, adet girin ve doğrudan sepetinize ekleyin.')}<div class="catalog-heading"><h2>Ürün kataloğu <span>${data.total} ürün</span></h2><div class="muted"><small>Fiyatlar TL cinsindedir.</small></div></div><div class="catalog-layout">${filters()}<div><section class="panel"><div class="toolbar"><label class="search">${icon('search')}<input id="catalog-search" aria-label="Ürün ara" placeholder="Ürün adı, kodu veya marka ile ara…" value="${esc(f.q)}" maxlength="200"><kbd>/</kbd></label><select class="select" data-filter="sort" aria-label="Ürün sıralaması" ${state.route==='new-products'?'disabled':''}>${[['','Varsayılan sıralama'],['name','Ürün adına göre'],['price-asc','Fiyat: düşükten yükseğe'],['price-desc','Fiyat: yüksekten düşüğe'],['newest','Son eklenenler']].map(([v,l])=>`<option value="${v}" ${f.sort===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="active-filters">${f.q?`<span class="filter-chip">Arama: ${esc(f.q)}</span>`:''}${f.brand?`<span class="filter-chip">${esc(f.brand)}</span>`:''}${(f.q||f.brand||f.stock||f.category)?'<button class="text-button" data-action="clear-filters">Temizle ×</button>':''}</div>${productTable(data)}</section><div class="catalog-footnote"><span>Stok bilgileri sipariş anında tekrar kontrol edilir.</span><span>Güvenli sipariş altyapısı</span></div></div></div>`;
+const CATALOG_ROUTES = new Set(['home', 'catalog', 'new-products']);
+
+let renderVersion = 0;
+
+function resetFilters() {
+    state.filters = {
+        q: '',
+        category: '',
+        brand: '',
+        stock: '',
+        sort: '',
+        page: 1,
+    };
 }
-async function cartPage(){await refreshCart();const c=state.cart;return heading('Sepetim',`${c.items.length} farklı ürün · ${c.count} adet`,`<a class="button" href="#catalog">Alışverişe devam et ${icon('arrow')}</a>`)+(c.items.length?`<div class="cart-layout"><section class="panel"><div class="table-scroll"><table class="data-table"><thead><tr><th>Ürün</th><th>Birim fiyat</th><th>Adet</th><th>Toplam</th><th></th></tr></thead><tbody>${c.items.map(p=>`<tr><td><div class="cart-product">${thumb(p)}<div><button class="product-name" data-action="product" data-id="${p.id}">${esc(p.name)}</button><span class="product-meta">${esc(p.code)}</span>${p.quantity>p.stock?`<span class="stock empty">Stok yetersiz: ${p.stock}</span>`:''}</div></div></td><td class="money">${money(p.price)}</td><td>${quantity(p,'cart')}</td><td class="money">${money(p.total)}</td><td><button class="icon-button" data-action="remove" data-id="${p.id}" aria-label="${esc(p.name)} sepetten çıkar">${icon('trash')}</button></td></tr>`).join('')}</tbody></table></div><div class="note-input"><label for="order-note">Sipariş notu <small class="muted">(isteğe bağlı)</small></label><textarea id="order-note" class="input" rows="2" maxlength="1000" placeholder="Siparişinizle ilgili belirtmek istedikleriniz…">${esc(draftNote())}</textarea></div></section><aside class="panel summary"><h2>Sipariş özeti</h2><div class="summary-row"><span>Ürün adedi</span><b>${c.count}</b></div><div class="summary-row"><span>Ara toplam</span><b>${money(c.total)}</b></div><div class="summary-row summary-total"><span>Toplam</span><span>${money(c.total)}</span></div><button class="button primary" data-action="checkout">Siparişi gözden geçir ${icon('arrow')}</button><p class="summary-note">Siparişiniz bayi yöneticisinin onayına gönderilir. Bu aşamada online ödeme alınmaz.</p></aside></div>`:`<section class="panel">${empty('Sepetiniz henüz boş.','Ürün kataloğundan ihtiyaç duyduğunuz parçaları ekleyin.',(storedApproval()?'<button class="button primary" data-action="checkout">Bekleyen siparişi sorgula</button>':'<a class="button primary" href="#catalog">Ürünleri keşfet</a>'))}</section>`)}
-export function ordersTable(items,admin=false){return items.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Sipariş numarası</th>${admin?'<th>Bayi</th>':''}<th>Tarih</th><th>Toplam tutar</th><th>Durum</th><th></th></tr></thead><tbody>${items.map(o=>`<tr><td><button class="row-link mono" data-action="order" data-id="${o.id}">${esc(o.number)}</button></td>${admin?`<td class="cell-stack"><b>${esc(o.company)}</b><small>${esc(o.firstName)} ${esc(o.lastName)}</small></td>`:''}<td>${date(o.createdAt)}</td><td class="money">${money(o.total)}</td><td>${status(o.status)}</td><td><button class="icon-button" data-action="order" data-id="${o.id}" aria-label="Sipariş detayını aç">${icon('chevron')}</button></td></tr>`).join('')}</tbody></table></div>`:empty('Henüz sipariş yok.','Oluşturulan siparişler burada listelenecek.')}
-async function ordersPage(){const page=+(state.params.get('page')||1);const d=await api('/orders?page='+page);return heading('Siparişlerim','Tüm siparişleriniz ve güncel durumları.',`<a class="button primary" href="#catalog">${icon('plus')} Yeni sipariş</a>`)+`<section class="panel">${ordersTable(d.items)}${pager(d.total,page)}</section>`}
-export async function render(){
-    const version=++renderVersion;const previousRoute=state.route;const [route,query='']=(location.hash.slice(1)||'home').split('?');state.route=route;state.params=new URLSearchParams(query);
-    if(route==='new-products'&&previousRoute!==route)state.filters={q:'',category:'',brand:'',stock:'',sort:'',page:1};
-    if(!state.user){document.querySelector('#app').innerHTML=publicRoutes.includes(route)?publicShell(brand):auth(route==='register')+portalFooter();document.title=`${publicRoutes.includes(route)?paths[route][0]:route==='register'?'Bayi kaydı':'Bayi girişi'} · U1 Business`;return}
-    if(route==='login'||route==='register'){go('home');return}
-    if(route.startsWith('admin')&&state.user.role!=='Admin'){go('home');return}
-    if(!paths[route]){go('home');return}
-    if(!document.querySelector('#page') || document.querySelector('[data-shell-route]')?.dataset.shellRoute!==route)document.querySelector('#app').innerHTML=shell();
-    const page=document.querySelector('#page');page.setAttribute('aria-busy','true');
-    try{
-        if(!state.meta || ['home','catalog','new-products'].includes(route))state.meta=await api('/catalog/meta');
-        const html=route.startsWith('admin')?await renderAdmin():route==='cart'?await cartPage():route==='orders'?await ordersPage():portalRoutes[route]&&route!=='new-products'?renderPortalPage():await catalog();
-        if(version!==renderVersion)return;
-        const active=document.activeElement,focusId=active?.id,selection=active?.selectionStart;
-        page.innerHTML=html;page.removeAttribute('aria-busy');document.title=`${paths[route][0]} · U1 Business`;
-        if(focusId&&document.getElementById(focusId)){document.getElementById(focusId).focus({preventScroll:true});try{document.getElementById(focusId).setSelectionRange(selection,selection)}catch{}}
-    }catch(e){if(version!==renderVersion)return;page.innerHTML=`<div class="content-error"><h2>Bu ekran yüklenemedi.</h2><p>${esc(e.message)}</p><button class="button" data-action="retry">Tekrar dene</button></div>`;page.removeAttribute('aria-busy')}
+
+function parseRoute() {
+    const [route, query = ''] = (location.hash.slice(1) || 'home').split('?');
+
+    state.route = route;
+    state.params = new URLSearchParams(query);
+
+    return route;
 }
-async function showProduct(id){const p=await api('/products/'+id);modal('Ürün detayları',`<div class="detail-grid"><img class="detail-img" src="${esc(p.imageUrl)}" alt="${esc(p.name)}"><div class="detail-copy"><div class="eyebrow">${esc(p.category)} / ${esc(p.brand)}</div><h2>${esc(p.name)}</h2><p>${esc(p.description)}</p>${p.imageUrl?.startsWith("/images/products/")?'<p class="photo-caption">Temsili ürün fotoğrafı · <a href="/image-credits.html" target="_blank" rel="noopener">Kaynak ve lisans</a></p>':''}<div class="specs">${[['Ürün kodu',p.code],['Üretici kodu',p.manufacturerCode],['Özel kod 1',p.specialCode1||'—'],['Özel kod 2',p.specialCode2||'—'],['Marka',p.brand],['Mevcut stok',p.stock+' adet']].map(([k,v])=>`<div><small>${k}</small>${esc(v)}</div>`).join('')}</div>${stock(p)}</div></div><div class="detail-buy"><span class="money">${money(p.price)}</span><div class="purchase">${quantity(p,'detail')}<button class="button primary" data-action="add" data-id="${p.id}" ${!p.stock?'disabled':''}>${icon('cart')} Sepete ekle</button></div></div>`)}
-async function showOrder(id){const d=await api('/orders/'+id),o=d.order;modal('Sipariş detayları',`<div class="eyebrow">${esc(o.number)}</div><div class="meta-line"><div><small>Bayi</small><b>${esc(o.company||o.firstName+' '+o.lastName)}</b></div><div><small>Sipariş tarihi</small><b>${date(o.createdAt)}</b></div><div><small>Durum</small>${status(o.status)}</div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Ürün / Kod</th><th>Adet</th><th>Birim fiyat</th><th>Toplam</th></tr></thead><tbody>${d.items.map(i=>`<tr><td class="cell-stack"><b>${esc(i.productName)}</b><small>${esc(i.productCode)}</small></td><td>${i.quantity}</td><td class="money">${money(i.unitPrice)}</td><td class="money">${money(i.total)}</td></tr>`).join('')}</tbody></table></div><div class="detail-total">${money(o.total)}</div>${o.note?`<div class="order-note">${esc(o.note)}</div>`:''}<p class="muted"><small>Ürün ve fiyat bilgileri sipariş oluşturulduğu andaki kayıtlardır.</small></p>${state.user.role==='Admin'&&state.route.startsWith('admin')&&o.status!=='Reddedildi'?`<form data-form="order-status" data-id="${o.id}" class="form-actions"><select name="status" class="select" aria-label="Sipariş durumu"><option value="Onaylandı">Onaylandı</option><option value="Reddedildi">Reddedildi · stok iade edilir</option></select><button class="button primary" type="submit">Durumu güncelle</button></form>`:''}`)}
-document.addEventListener('click',async e=>{
-    const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,id=+el.dataset.id;
-    try{
-        if(a==='skip'){e.preventDefault();document.querySelector('#main')?.focus();return}
-        if(a==='close')return closeModal();if(a==='portal-menu'){const nav=document.querySelector('#portal-nav');const open=nav.classList.toggle('open');el.setAttribute('aria-expanded',String(open));return}
-        if(a==='logout'){clearCheckoutSession();await api('/auth/logout',{method:'POST'});state.user=null;state.meta=null;state.filters={q:'',category:'',brand:'',stock:'',sort:'',page:1};csrf='';go('login');return}
-        if(a==='retry')return render();if(a==='product')return await showProduct(id);if(a==='order')return await showOrder(id);
-        if(a==='category'){state.filters.category=el.dataset.id;state.filters.page=1;return render()}
-        if(a==='clear-filters'){state.filters={q:'',category:'',brand:'',stock:'',sort:'',page:1};return render()}
-        if(a==='page'){if(['catalog','home','new-products'].includes(state.route)){state.filters.page=+el.dataset.page;return render()}state.params.set('page',el.dataset.page);return go(state.route+'?'+state.params)}
-        if(a==='banner-slide'){state.bannerId=state.meta.banners[+el.dataset.index]?.id??null;document.querySelector('#banner').innerHTML=banner();return}
-        if(a==='banner-go'){const selected=selectedBanner().b;if(!selected)return;state.filters.q=selected.searchTerm;state.filters.page=1;return go('catalog')}
-        if(a==='quantity'){const input=el.parentElement.querySelector('input'),v=Math.max(1,Math.min(+input.max,Number(input.value)+Number(el.dataset.delta)));input.value=v;if(input.dataset.context==='cart'){await api('/cart',{method:'PUT',body:{productId:+input.dataset.quantity,quantity:v}});await render()}return}
-        if(a==='add'){const input=el.closest('.purchase').querySelector('input'),qty=Number(input.value);if(!Number.isInteger(qty)||qty<1)throw new Error('Geçerli bir adet girin.');el.disabled=true;await api('/cart',{method:'POST',body:{productId:id,quantity:qty}});await refreshCart();toast(`${qty} adet ürün sepetinize eklendi.`);return}
-        if(a==='remove'){await api('/cart/'+id,{method:'DELETE'});await render();toast('Ürün sepetten çıkarıldı.');return}
-        if(a==='checkout'){await openCheckout(document.querySelector('#order-note')?.value??draftNote());return}
-        await adminAction(a,el);
-    }catch(error){toast(error.message,true)}finally{if(a==='add')el.disabled=false}
+
+function renderShell() {
+    return portalShell(ROUTES, brand);
+}
+
+function pageTitle(route) {
+    if (publicRoutes.includes(route)) {
+        return ROUTES[route][0];
+    }
+
+    if (route === 'register') {
+        return 'Bayi kaydı';
+    }
+
+    if (route === 'login') {
+        return 'Bayi girişi';
+    }
+
+    return ROUTES[route]?.[0] || 'U1 Business';
+}
+
+function restoreFocusedElement(focusId, selectionStart) {
+    if (!focusId) {
+        return;
+    }
+
+    const element = document.getElementById(focusId);
+    if (!element) {
+        return;
+    }
+
+    element.focus({ preventScroll: true });
+
+    try {
+        element.setSelectionRange(selectionStart, selectionStart);
+    } catch {
+        // Not every focusable element supports text selection.
+    }
+}
+
+async function renderAuthenticatedPage(route) {
+    if (!state.meta || CATALOG_ROUTES.has(route)) {
+        state.meta = await api('/catalog/meta');
+    }
+
+    if (route.startsWith('admin')) {
+        return renderAdmin();
+    }
+
+    if (route === 'cart') {
+        return renderCartPage();
+    }
+
+    if (route === 'orders') {
+        return renderOrdersPage();
+    }
+
+    if (portalRoutes[route] && route !== 'new-products') {
+        return renderPortalPage();
+    }
+
+    return renderCatalogPage();
+}
+
+export async function render() {
+    const version = ++renderVersion;
+    const previousRoute = state.route;
+    const route = parseRoute();
+
+    if (route === 'new-products' && previousRoute !== route) {
+        resetFilters();
+    }
+
+    if (!state.user) {
+        const isPublicRoute = publicRoutes.includes(route);
+
+        document.querySelector('#app').innerHTML = isPublicRoute
+            ? publicShell(brand)
+            : renderAuth(route === 'register') + portalFooter();
+
+        document.title = `${pageTitle(route)} · U1 Business`;
+        return;
+    }
+
+    if (route === 'login' || route === 'register') {
+        go('home');
+        return;
+    }
+
+    if (route.startsWith('admin') && state.user.role !== 'Admin') {
+        go('home');
+        return;
+    }
+
+    if (!ROUTES[route]) {
+        go('home');
+        return;
+    }
+
+    const shellRoute = document.querySelector('[data-shell-route]')?.dataset.shellRoute;
+    if (!document.querySelector('#page') || shellRoute !== route) {
+        document.querySelector('#app').innerHTML = renderShell();
+    }
+
+    const page = document.querySelector('#page');
+    page.setAttribute('aria-busy', 'true');
+
+    try {
+        const html = await renderAuthenticatedPage(route);
+
+        if (version !== renderVersion) {
+            return;
+        }
+
+        const activeElement = document.activeElement;
+        const focusId = activeElement?.id;
+        const selectionStart = activeElement?.selectionStart;
+
+        page.innerHTML = html;
+        page.removeAttribute('aria-busy');
+        document.title = `${ROUTES[route][0]} · U1 Business`;
+
+        restoreFocusedElement(focusId, selectionStart);
+    } catch (error) {
+        if (version !== renderVersion) {
+            return;
+        }
+
+        page.innerHTML = `<div class="content-error">
+            <h2>Bu ekran yüklenemedi.</h2>
+            <p>${esc(error.message)}</p>
+            <button class="button" data-action="retry">Tekrar dene</button>
+        </div>`;
+        page.removeAttribute('aria-busy');
+    }
+}
+
+async function boot() {
+    try {
+        state.user = await api('/auth/me');
+        await refreshCart();
+    } catch {
+        state.user = null;
+    }
+
+    await render();
+}
+
+setSameRouteHandler(render);
+setUnauthorizedHandler(clearCheckoutSession);
+
+bindAppEvents({
+    render,
+    resetFilters,
+    catalogRouteNames: CATALOG_ROUTES,
 });
-document.addEventListener('change',async e=>{
-    const input=e.target;
-    try{
-        if(input.dataset.filter){state.filters[input.dataset.filter]=input.type==='checkbox'&&!input.checked?'':input.value;state.filters.page=1;await render()}
-        if(input.dataset.context==='cart'){await api('/cart',{method:'PUT',body:{productId:+input.dataset.quantity,quantity:Number(input.value)}});await render()}
-        if(input.id==='product-image-file'&&input.files[0]){const body=new FormData();body.append('file',input.files[0]);const d=await api('/admin/images',{method:'POST',body});document.querySelector('[name=imageUrl]').value=d.url;document.querySelector('.upload-preview').src=d.url;toast('Görsel yüklendi.')}
-    }catch(error){toast(error.message,true);if(input.dataset.context==='cart')render()}
+
+window.addEventListener('hashchange', () => {
+    closeModal();
+    render();
+    window.scrollTo({ top: 0 });
 });
-document.addEventListener('input',e=>{if(e.target.id==='order-note')saveNote(e.target.value);if(e.target.id==='catalog-search'){clearTimeout(searchTimer);state.filters.q=e.target.value;state.filters.page=1;searchTimer=setTimeout(render,300)}});
-document.addEventListener('submit',async e=>{
-    const form=e.target;if(!form.dataset.form)return;e.preventDefault();const button=form.querySelector('[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;
-    try{
-        const data=formData(form),kind=form.dataset.form;
-        if(kind==='header-search'){state.filters={q:data.q.trim(),category:'',brand:'',stock:'',sort:'',page:1};go('catalog');return}
-        if(kind==='login'||kind==='register'){state.user=await api('/auth/'+kind,{method:'POST',body:data});csrf='';state.meta=null;checkoutApproval=null;await refreshCart();go('home');return}
-        if(kind==='checkout'){const approval=storedApproval()||checkoutApproval;if(!approval)throw new Error('Sipariş onayı bulunamadı. Sepeti yeniden gözden geçirin.');if(approval.status==='draft')saveApproval({...approval,status:'sending'});try{const d=await api('/orders',{method:'POST',body:{requestId:approval.requestId,note:approval.note,lines:approval.lines.map(({productId,quantity,unitPrice})=>({productId,quantity,unitPrice}))}});saveApproval(null);saveNote('');await refreshCart();closeModal();go('orders');toast(`Sipariş oluşturuldu: ${d.number}`)}catch(error){if(error.code==='CART_CHANGED'){const note=approval.note;saveApproval(null);await openCheckout(note,true,approval)}else{if(error.status&&error.status<500&&error.code!=='REQUEST_BUSY')saveApproval(null);else saveApproval({...approval,status:'unknown'});throw error}}return}
-        if(kind==='order-status'){await api('/admin/orders/'+form.dataset.id+'/status',{method:'PUT',body:data});closeModal();await render();toast('Sipariş durumu güncellendi.');return}
-        await adminSubmit(kind,form,data);
-    }catch(error){const target=form.querySelector('#auth-error');if(target)target.textContent=error.message;else toast(error.message,true)}finally{if(button)button.disabled=false}
+
+window.addEventListener('focus', async () => {
+    if (state.user && ['orders', 'admin-orders'].includes(state.route)) {
+        await render();
+    }
 });
-document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){const s=document.querySelector('#catalog-search')||document.querySelector('#global-search');if(s){e.preventDefault();s.focus()}}});
-document.addEventListener('error',e=>{if(e.target.tagName==='IMG'&&!e.target.src.endsWith('/images/product.svg'))e.target.src='/images/product.svg'},true);
-document.querySelector('#dialog').addEventListener('click',e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeModal()}});
-document.querySelector('#dialog').addEventListener('close',()=>{if(checkoutApproval?.status==='draft')checkoutApproval=null});
-document.addEventListener('click',e=>{document.querySelectorAll('.native-menu[open]').forEach(menu=>{if(!menu.contains(e.target)||e.target.closest('a,button'))menu.open=false})});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.native-menu[open]').forEach(menu=>{menu.open=false;menu.querySelector('summary').focus()})});
-window.addEventListener('hashchange',()=>{closeModal();render();window.scrollTo({top:0})});
-window.addEventListener('focus',async()=>{if(state.user&&['orders','admin-orders'].includes(state.route))await render()});
-async function boot(){try{state.user=await api('/auth/me');await refreshCart()}catch{state.user=null}await render()}
+
 boot();

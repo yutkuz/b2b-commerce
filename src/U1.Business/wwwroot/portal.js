@@ -1,5 +1,5 @@
 import { company, documents } from './content.js?v=20260923f';
-import { state, esc, icon, money, heading } from './app.js?v=20260923f';
+import { state, esc, icon, money, heading } from './app-core.js?v=20260928a';
 
 export const portalRoutes = {
     'new-products': ['Yeni ürünler', 'grid'],
