@@ -1,5 +1,6 @@
 using System.Data;
 using Dapper;
+using Microsoft.Data.SqlClient;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -7,6 +8,8 @@ namespace U1.Business.Services;
 
 public sealed class OrderService(Database database)
 {
+    private const int MaxDeadlockAttempts = 3;
+
     // The cart row is a per-user mutex. Product locks are taken in Id order.
     public async Task<object> Checkout(int userId, CheckoutInput input)
     {
@@ -14,13 +17,29 @@ public sealed class OrderService(Database database)
             input.Lines.Any(x => x is null || x.ProductId <= 0 || x.Quantity <= 0 || x.UnitPrice <= 0) ||
             input.Lines.Select(x => x.ProductId).Distinct().Count() != input.Lines.Length)
             throw new BusinessException("Sipariş onayındaki ürün bilgileri geçersiz.");
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await CheckoutOnce(userId, input);
+            }
+            catch (SqlException ex) when (ex.Number == 1205 && attempt < MaxDeadlockAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(40 * attempt));
+            }
+        }
+    }
+
+    private async Task<object> CheckoutOnce(int userId, CheckoutInput input)
+    {
         using var db = database.Open(); await db.OpenAsync(); using var tx = db.BeginTransaction(IsolationLevel.Serializable);
         var cart = await db.ExecuteScalarAsync<int>("SELECT Id FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId=@userId", new { userId }, tx);
         var requestLock = await db.ExecuteScalarAsync<int>("EXEC sp_getapplock @Resource=@resource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=30000",new { resource="U1Business.Order."+input.RequestId.ToString("N") },tx);
         if(requestLock<0) throw new BusinessException("Sipariş yeniden denenemedi. Biraz sonra tekrar deneyin.",409,"REQUEST_BUSY");
         var existing = await db.QuerySingleOrDefaultAsync("SELECT Id,Number,Total FROM Orders WITH(READCOMMITTEDLOCK) WHERE RequestId=@RequestId AND UserId=@userId", new { input.RequestId, userId }, tx);
         if (existing is not null) { tx.Commit(); return existing; }
-        if (await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Orders WHERE RequestId=@RequestId", new { input.RequestId }, tx) > 0)
+        if (await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Orders WITH(READCOMMITTEDLOCK) WHERE RequestId=@RequestId", new { input.RequestId }, tx) > 0)
             throw new BusinessException("Bu sipariş anahtarı kullanılamaz.",409,"REQUEST_ID_CONFLICT");
         var lines = (await db.QueryAsync<CartLine>("SELECT ProductId,Quantity FROM CartItems WHERE CartId=@cart ORDER BY ProductId", new { cart }, tx)).ToList();
         if (lines.Count == 0) throw new BusinessException("Sepetiniz onaydan sonra değişti. Güncel tutarı yeniden onaylayın.",409,"CART_CHANGED");
@@ -33,7 +52,7 @@ public sealed class OrderService(Database database)
             !input.Lines.Any(approved => approved.ProductId == line.ProductId && approved.Quantity == line.Quantity && approved.UnitPrice == line.Product.Price)))
             throw new BusinessException("Sepetiniz onaydan sonra değişti. Güncel tutarı yeniden onaylayın.",409,"CART_CHANGED");
         foreach (var line in lines)
-            if (line.Quantity > line.Product.Stock) throw new BusinessException($"{line.Product.Name} için yeterli stok bulunmamaktadır. Mevcut stok: {line.Product.Stock}.",409,"INSUFFICIENT_STOCK");
+            if (line.Quantity > line.Product.Stock) throw new BusinessException(`${line.Product.Name} için yeterli stok bulunmamaktadır. Mevcut stok: ${line.Product.Stock}.`,409,"INSUFFICIENT_STOCK");
         var total = lines.Sum(l => l.Quantity*l.Product.Price);
         var number = "U1-"+DateTime.UtcNow.ToString("yyyyMMdd")+"-"+Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
         var id = await db.ExecuteScalarAsync<int>("INSERT INTO Orders(Number,UserId,Total,RequestId,Note) OUTPUT INSERTED.Id VALUES(@number,@userId,@total,@RequestId,@note)",new {number,userId,total,input.RequestId,note=input.Note?.Trim() ?? ""},tx);
@@ -42,6 +61,7 @@ public sealed class OrderService(Database database)
         await db.ExecuteAsync("DELETE FROM CartItems WHERE CartId=@cart",new {cart},tx); tx.Commit();
         return new { Id=id, Number=number, Total=total };
     }
+
     public async Task ChangeStatus(int id, string status)
     {
         if (status is not ("Onaylandı" or "Reddedildi")) throw new BusinessException("Geçersiz sipariş durumu.");
