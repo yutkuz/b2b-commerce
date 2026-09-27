@@ -39,6 +39,7 @@ public sealed class UserInput
     [StringLength(180)] public string Company { get; set; } = "";
     public bool IsActive { get; set; } = true;
     public string? NewPassword { get; set; }
+    public int Version { get; set; }
 }
 public sealed class User
 {
