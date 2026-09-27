@@ -84,8 +84,8 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
 
         var products = await clients[0].GetFromJsonAsync<JsonElement>("/api/products?q=DG-001");
         var product = products.GetProperty("items")[0];
-        var productId = product.GetProperty("id").GetInt32();
-        var price = product.GetProperty("price").GetDecimal();
+        var productId = Property(product, "id").GetInt32();
+        var price = Property(product, "price").GetDecimal();
 
         for (var i = 0; i < clients.Length; i++)
         {
@@ -107,7 +107,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
 
         var refreshed = await clients[0].GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
-        Assert.Equal(16, refreshed.GetProperty("stock").GetInt32());
+        Assert.Equal(16, Property(refreshed, "stock").GetInt32());
     }
 
     [Fact]
@@ -123,19 +123,19 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         var adminToken = await GetCsrf(admin);
         var users = await admin.GetFromJsonAsync<JsonElement>("/api/admin/users?q=bayi%40u1.local");
         var dealer = users.GetProperty("items").EnumerateArray()
-            .Single(x => x.GetProperty("email").GetString() == "bayi@u1.local");
+            .Single(x => Property(x, "email").GetString() == "bayi@u1.local");
 
-        var id = dealer.GetProperty("id").GetInt32();
-        var version = dealer.GetProperty("version").GetInt32();
+        var id = Property(dealer, "id").GetInt32();
+        var version = Property(dealer, "version").GetInt32();
         var newPassword = "CINewPassword!2026";
 
         var firstUpdate = await SendJson(admin, HttpMethod.Put, $"/api/admin/users/{id}", new
         {
-            firstName = dealer.GetProperty("firstName").GetString(),
-            lastName = dealer.GetProperty("lastName").GetString(),
-            email = dealer.GetProperty("email").GetString(),
-            phone = dealer.GetProperty("phone").GetString(),
-            company = dealer.GetProperty("company").GetString(),
+            firstName = Property(dealer, "firstName").GetString(),
+            lastName = Property(dealer, "lastName").GetString(),
+            email = Property(dealer, "email").GetString(),
+            phone = Property(dealer, "phone").GetString(),
+            company = Property(dealer, "company").GetString(),
             isActive = true,
             newPassword,
             version
@@ -163,6 +163,14 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         var dealerLogin = await SendJson(dealerClient, HttpMethod.Post, "/api/auth/login",
             new { email = "bayi@u1.local", password = newPassword }, dealerAnonymousToken);
         Assert.Equal(HttpStatusCode.OK, dealerLogin.StatusCode);
+    }
+
+    private static JsonElement Property(JsonElement element, string name)
+    {
+        foreach (var property in element.EnumerateObject())
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                return property.Value;
+        throw new KeyNotFoundException($"JSON property '{name}' was not found.");
     }
 
     private static async Task<string> GetCsrf(HttpClient client)
