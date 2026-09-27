@@ -33,6 +33,7 @@ public sealed class OrderService(Database database)
 
     private async Task<object> CheckoutOnce(int userId, CheckoutInput input)
     {
+        var approvedLines = input.Lines ?? throw new BusinessException("Sipariş onayındaki ürün bilgileri geçersiz.");
         using var db = database.Open(); await db.OpenAsync(); using var tx = db.BeginTransaction(IsolationLevel.Serializable);
         var cart = await db.ExecuteScalarAsync<int>("SELECT Id FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId=@userId", new { userId }, tx);
         var requestLock = await db.ExecuteScalarAsync<int>("EXEC sp_getapplock @Resource=@resource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=30000",new { resource="U1Business.Order."+input.RequestId.ToString("N") },tx);
@@ -48,8 +49,8 @@ public sealed class OrderService(Database database)
             var p = await db.QuerySingleAsync<Snapshot>("SELECT Code,Name,Price,Stock FROM Products WITH(UPDLOCK,HOLDLOCK) WHERE Id=@ProductId", line, tx);
             line.Product = p;
         }
-        if(lines.Count != input.Lines.Length || lines.Any(line =>
-            !input.Lines.Any(approved => approved.ProductId == line.ProductId && approved.Quantity == line.Quantity && approved.UnitPrice == line.Product.Price)))
+        if(lines.Count != approvedLines.Length || lines.Any(line =>
+            !approvedLines.Any(approved => approved.ProductId == line.ProductId && approved.Quantity == line.Quantity && approved.UnitPrice == line.Product.Price)))
             throw new BusinessException("Sepetiniz onaydan sonra değişti. Güncel tutarı yeniden onaylayın.",409,"CART_CHANGED");
         foreach (var line in lines)
             if (line.Quantity > line.Product.Stock) throw new BusinessException($"{line.Product.Name} için yeterli stok bulunmamaktadır. Mevcut stok: {line.Product.Stock}.",409,"INSUFFICIENT_STOCK");
