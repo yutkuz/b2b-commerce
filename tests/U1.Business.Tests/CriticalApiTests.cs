@@ -57,6 +57,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
     [Fact]
     public async Task Eight_concurrent_dealers_can_checkout_without_server_errors()
     {
+        using var bootstrap = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         await factory.ResetCheckoutState();
 
         var clients = Enumerable.Range(0, 8)
