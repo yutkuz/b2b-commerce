@@ -52,7 +52,7 @@ public sealed class OrderService(Database database)
             !input.Lines.Any(approved => approved.ProductId == line.ProductId && approved.Quantity == line.Quantity && approved.UnitPrice == line.Product.Price)))
             throw new BusinessException("Sepetiniz onaydan sonra değişti. Güncel tutarı yeniden onaylayın.",409,"CART_CHANGED");
         foreach (var line in lines)
-            if (line.Quantity > line.Product.Stock) throw new BusinessException(`${line.Product.Name} için yeterli stok bulunmamaktadır. Mevcut stok: ${line.Product.Stock}.`,409,"INSUFFICIENT_STOCK");
+            if (line.Quantity > line.Product.Stock) throw new BusinessException($"{line.Product.Name} için yeterli stok bulunmamaktadır. Mevcut stok: {line.Product.Stock}.",409,"INSUFFICIENT_STOCK");
         var total = lines.Sum(l => l.Quantity*l.Product.Price);
         var number = "U1-"+DateTime.UtcNow.ToString("yyyyMMdd")+"-"+Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
         var id = await db.ExecuteScalarAsync<int>("INSERT INTO Orders(Number,UserId,Total,RequestId,Note) OUTPUT INSERTED.Id VALUES(@number,@userId,@total,@RequestId,@note)",new {number,userId,total,input.RequestId,note=input.Note?.Trim() ?? ""},tx);
