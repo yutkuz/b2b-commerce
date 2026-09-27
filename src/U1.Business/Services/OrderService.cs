@@ -34,7 +34,7 @@ public sealed class OrderService(Database database)
     private async Task<object> CheckoutOnce(int userId, CheckoutInput input)
     {
         var approvedLines = input.Lines ?? throw new BusinessException("Sipariş onayındaki ürün bilgileri geçersiz.");
-        using var db = database.Open(); await db.OpenAsync(); using var tx = db.BeginTransaction(IsolationLevel.Serializable);
+        using var db = database.Open(); await db.OpenAsync(); using var tx = db.BeginTransaction(IsolationLevel.ReadCommitted);
         var cart = await db.ExecuteScalarAsync<int>("SELECT Id FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId=@userId", new { userId }, tx);
         var requestLock = await db.ExecuteScalarAsync<int>("EXEC sp_getapplock @Resource=@resource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=30000",new { resource="U1Business.Order."+input.RequestId.ToString("N") },tx);
         if(requestLock<0) throw new BusinessException("Sipariş yeniden denenemedi. Biraz sonra tekrar deneyin.",409,"REQUEST_BUSY");

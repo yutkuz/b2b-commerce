@@ -83,7 +83,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         }
 
         var products = await clients[0].GetFromJsonAsync<JsonElement>("/api/products?q=DG-001");
-        var product = products.GetProperty("items")[0];
+        var product = Property(products, "items")[0];
         var productId = Property(product, "id").GetInt32();
         var price = Property(product, "price").GetDecimal();
 
@@ -104,7 +104,11 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
 
         var responses = await Task.WhenAll(requests);
 
-        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        var failures = new List<string>();
+        foreach (var response in responses)
+            if (response.StatusCode != HttpStatusCode.OK)
+                failures.Add($"{(int)response.StatusCode} {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        Assert.True(failures.Count == 0, "Concurrent checkout failures:\n" + string.Join("\n", failures));
 
         var refreshed = await clients[0].GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
         Assert.Equal(16, Property(refreshed, "stock").GetInt32());
@@ -122,7 +126,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
 
         var adminToken = await GetCsrf(admin);
         var users = await admin.GetFromJsonAsync<JsonElement>("/api/admin/users?q=bayi%40u1.local");
-        var dealer = users.GetProperty("items").EnumerateArray()
+        var dealer = Property(users, "items").EnumerateArray()
             .Single(x => Property(x, "email").GetString() == "bayi@u1.local");
 
         var id = Property(dealer, "id").GetInt32();
@@ -144,10 +148,10 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
 
         var staleUpdate = await SendJson(admin, HttpMethod.Put, $"/api/admin/users/{id}", new
         {
-            firstName = dealer.GetProperty("firstName").GetString(),
-            lastName = dealer.GetProperty("lastName").GetString(),
-            email = dealer.GetProperty("email").GetString(),
-            phone = dealer.GetProperty("phone").GetString(),
+            firstName = Property(dealer, "firstName").GetString(),
+            lastName = Property(dealer, "lastName").GetString(),
+            email = Property(dealer, "email").GetString(),
+            phone = Property(dealer, "phone").GetString(),
             company = "Stale Admin Form",
             isActive = true,
             newPassword = (string?)null,
@@ -156,7 +160,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
 
         Assert.Equal(HttpStatusCode.Conflict, staleUpdate.StatusCode);
         var conflict = await staleUpdate.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("USER_CHANGED", conflict.GetProperty("code").GetString());
+        Assert.Equal("USER_CHANGED", Property(conflict, "code").GetString());
 
         using var dealerClient = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         var dealerAnonymousToken = await GetCsrf(dealerClient);
@@ -178,7 +182,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         var response = await client.GetAsync("/api/csrf");
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        return body.GetProperty("token").GetString()!;
+        return Property(body, "token").GetString()!;
     }
 
     private static Task<HttpResponseMessage> SendJson(
