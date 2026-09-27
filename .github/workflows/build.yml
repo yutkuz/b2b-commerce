@@ -12,11 +12,34 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Restore
+
+      - name: Restore application
         run: dotnet restore U1.Business.sln
-      - name: Build
+
+      - name: Build application
         run: dotnet build U1.Business.sln --no-restore --configuration Release -warnaserror
+
       - name: Check JavaScript syntax
         shell: pwsh
         run: |
-          Get-ChildItem src/U1.Business/wwwroot -Filter *.js | ForEach-Object { node --check $_.FullName }
+          $files = Get-ChildItem src/U1.Business/wwwroot -Filter *.js
+          foreach ($file in $files) {
+            node --check $file.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "JavaScript syntax check failed: $($file.FullName)"
+            }
+          }
+
+      - name: Start SQL Server LocalDB
+        shell: pwsh
+        run: |
+          sqllocaldb start MSSQLLocalDB
+          if ($LASTEXITCODE -ne 0) {
+            throw "SQL Server LocalDB could not be started."
+          }
+
+      - name: Restore API tests
+        run: dotnet restore tests/U1.Business.Tests/U1.Business.Tests.csproj
+
+      - name: Run API tests
+        run: dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-restore --configuration Release --logger "trx;LogFileName=api-tests.trx"

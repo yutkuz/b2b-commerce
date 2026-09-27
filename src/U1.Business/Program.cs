@@ -76,3 +76,5 @@ app.MapAdmin();
 app.MapFallbackToFile("index.html");
 await app.Services.GetRequiredService<Database>().Initialize(app.Environment.IsDevelopment());
 app.Run();
+
+public partial class Program { }
