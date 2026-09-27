@@ -1,0 +1,50 @@
+/* Compact trade-catalog styling: square geometry, readable contrast, quiet chrome. */
+:root{--ink:#253447;--blue:#254e79;--line:#dde2e6}
+body{background:#f5f6f7}
+.brand-mark{width:42px;height:42px;flex:none}
+.brand-name{font-weight:750;letter-spacing:-.8px;white-space:nowrap}
+.wordmark-weight{font-weight:450;margin-left:4px}
+.brand-name small{letter-spacing:1.6px}
+.auth-art .brand-name{color:white}.auth-art .brand-name small{color:#bdc9d5}
+.portal-content h1{font-size:24px;font-weight:650}
+.portal-content .pagehead p,.product-meta{color:#647080}
+.portal-content .banner.bulletin{background:#fff;border:1px solid #d6dde3;border-top:3px solid #243b52;border-radius:0;padding:20px 22px;min-height:106px;display:grid;grid-template-columns:110px minmax(0,1fr) auto;gap:22px;align-items:center;margin-bottom:26px;color:#26384b}
+.bulletin-label{border-right:1px solid #dce1e5;align-self:stretch;display:flex;flex-direction:column;justify-content:center;gap:9px}
+.bulletin-label>span{font-size:10px;letter-spacing:1.5px;font-weight:700;color:#66717c}
+.bulletin-label>b{font-size:22px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1}
+.bulletin-label small{font-size:12px;color:#84909a;font-weight:400}
+.portal-content .bulletin h2{font-size:18px;font-weight:650;letter-spacing:-.3px;line-height:1.4}
+.portal-content .bulletin p{color:#626e7c;font-size:13px;line-height:1.6;margin-top:5px;max-width:650px}
+.portal-content .bulletin .bulletin-link{margin:0;background:none;border:0;border-bottom:1px solid #9eafbf;border-radius:0;padding:7px 0;font-weight:600;color:#254e79;white-space:nowrap;box-shadow:none}
+.portal-content .bulletin .banner-controls{position:static;grid-column:2/4;display:flex;gap:5px;margin-top:-8px;align-self:auto}
+.portal-content .bulletin .banner-controls button{width:28px;height:24px;border-radius:0;border:1px solid #dbe1e6;background:white;color:#657180;font-size:10px;font-variant-numeric:tabular-nums}
+.portal-content .bulletin .banner-controls button.active{background:#263d52;border-color:#263d52;color:white}
+.panel,.input,.select,.button,.search,.header-search,.stat{border-radius:2px}
+.product-thumb{width:56px;height:56px;object-fit:contain;background:white;border:1px solid #e5e8eb;border-radius:2px;padding:3px}
+.detail-img{object-fit:contain;background:#fff;border:1px solid #e3e7eb;padding:14px}
+.detail-copy .photo-caption{font-size:11px;color:#74808c;margin:10px 0}
+.photo-caption a{text-decoration:underline}
+.data-table th{background:#edf0f2;color:#526070}
+.data-table td{border-color:#e5e9ec}.data-table tbody tr:hover{background:#f5f8fa}
+.product-name{color:#233c54}.button.primary,.add-cart{background:#254e79;border-color:#254e79}
+.legal-document{max-width:940px;padding:32px 40px}
+.legal-document .document-intro{font-size:13px;border-bottom:1px solid #dfe4e8;padding-bottom:22px;margin-top:0;color:#66727f}
+.legal-document>section{padding:21px 0;border-bottom:1px solid #e6e9ec}
+.legal-document>section:last-of-type{border-bottom:0}
+.legal-document section h2{display:flex;gap:16px;font-size:17px;margin:0 0 9px;max-width:none;letter-spacing:-.2px}
+.legal-document section h2>span{font-size:12px;color:#8b96a0;padding-top:4px;font-variant-numeric:tabular-nums}
+.legal-document section p{font-size:14px;line-height:1.85;margin:0 0 0 34px;color:#526171;max-width:750px}
+.institutional-page h3{font-size:17px;margin-top:26px;color:#2c4056}
+.document-status{font-size:11px;color:#665e50;background:#f2efe8;border-radius:0;padding:6px 9px}
+.contact-details{margin:18px 0}.contact-details dt{font-size:11px;color:#78838f;margin-top:18px;margin-bottom:5px}.contact-details dd{margin:0;font-size:14px;line-height:1.6;color:#2a4056;overflow-wrap:anywhere}
+.contact-card .document-status{margin:0}.contact-card .contact-note{font-size:11px;line-height:1.65;border-top:1px solid #e1e5e8;padding-top:14px;color:#7a8490}
+.footer-bottom a:hover{text-decoration:underline}
+@media(max-width:760px){
+ .brand-mark{width:36px;height:36px}.brand-name{font-size:18px}
+ .portal-content .banner.bulletin{grid-template-columns:65px minmax(0,1fr);gap:13px;padding:16px;min-height:0}
+ .bulletin-label{grid-row:1/3;gap:12px}.bulletin-label>span{font-size:8px;letter-spacing:.6px}.bulletin-label>b{font-size:19px}.bulletin-label small{font-size:10px}
+ .portal-content .bulletin h2{font-size:16px}.portal-content .bulletin p{font-size:12px;max-width:none}
+ .portal-content .bulletin .bulletin-link{grid-column:2;justify-self:start;font-size:12px;white-space:normal;text-align:left}
+ .portal-content .bulletin .banner-controls{grid-column:2;margin:0}
+ .legal-document{padding:23px}.legal-document section h2{font-size:16px;gap:11px}.legal-document section p{margin-left:0;font-size:13px}
+}

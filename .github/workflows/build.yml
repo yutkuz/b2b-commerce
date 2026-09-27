@@ -1,0 +1,22 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore U1.Business.sln
+      - name: Build
+        run: dotnet build U1.Business.sln --no-restore --configuration Release -warnaserror
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: |
+          Get-ChildItem src/U1.Business/wwwroot -Filter *.js | ForEach-Object { node --check $_.FullName }

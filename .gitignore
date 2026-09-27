@@ -1,0 +1,29 @@
+# Build and package output
+**/bin/
+**/obj/
+**/node_modules/
+**/__pycache__/
+*.pyc
+**/TestResults/
+**/coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# Local settings, secrets, and generated content
+**/appsettings.Local.json
+**/appsettings.*.local.json
+**/secrets.json
+**/wwwroot/uploads/
+giriş.txt
+*.user
+*.suo
+.vs/
+.idea/
+
+# Local test artifacts
+.artifacts/
+docs/agentic-tasks/test-output/
+
+# Local documentation
+/docs/
