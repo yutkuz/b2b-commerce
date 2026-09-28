@@ -1,10 +1,10 @@
 using System.Security.Claims;
 using System.Threading.RateLimiting;
-using Dapper;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 using U1.Business.Services;
@@ -12,6 +12,12 @@ using U1.Business.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true);
+builder.Services.AddDbContextFactory<BusinessDbContext>((sp, options) =>
+{
+    var connectionString = sp.GetRequiredService<IConfiguration>().GetConnectionString("SqlServer")
+        ?? throw new InvalidOperationException("SqlServer bağlantı dizesi bulunamadı.");
+    options.UseSqlServer(connectionString);
+});
 builder.Services.AddSingleton<Database>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
@@ -28,9 +34,22 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     o.Events.OnRedirectToAccessDenied = c => { c.Response.StatusCode = 403; return Task.CompletedTask; };
     o.Events.OnValidatePrincipal = async c =>
     {
-        using var db = c.HttpContext.RequestServices.GetRequiredService<Database>().Open();
-        var u = await db.QuerySingleOrDefaultAsync<User>("SELECT Id,IsActive,AuthVersion FROM Users WHERE Id=@id", new { id = c.Principal!.FindFirstValue(ClaimTypes.NameIdentifier) });
-        if (u is null || !u.IsActive || u.AuthVersion.ToString() != c.Principal!.FindFirstValue("version")) c.RejectPrincipal();
+        var claim = c.Principal!.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!int.TryParse(claim, out var id))
+        {
+            c.RejectPrincipal();
+            return;
+        }
+
+        var db = c.HttpContext.RequestServices.GetRequiredService<BusinessDbContext>();
+        var u = await db.Users
+            .AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new { x.IsActive, x.AuthVersion })
+            .SingleOrDefaultAsync();
+
+        if (u is null || !u.IsActive || u.AuthVersion.ToString() != c.Principal.FindFirstValue("version"))
+            c.RejectPrincipal();
     };
 });
 builder.Services.AddAuthorization(o => o.AddPolicy("Admin", p => p.RequireRole("Admin")));
@@ -51,6 +70,7 @@ app.Use(async (context, next) =>
     catch (BusinessException ex) { context.Response.StatusCode = ex.Status; await context.Response.WriteAsJsonAsync(new { message = ex.Message, code = ex.Code }); }
     catch (BadHttpRequestException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = "İstek gövdesi veya alan tipleri geçersiz." }); }
     catch (AntiforgeryValidationException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = "Oturum doğrulanamadı. Sayfayı yenileyip tekrar deneyin." }); }
+    catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 }) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { message = "Bu e-posta veya ürün kodu zaten kullanılıyor." }); }
     catch (SqlException ex) when (ex.Number is 2601 or 2627) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { message = "Bu e-posta veya ürün kodu zaten kullanılıyor." }); }
     catch (Exception ex) { app.Logger.LogError(ex, "İstek işlenemedi"); context.Response.StatusCode = 500; await context.Response.WriteAsJsonAsync(new { message = "İşlem tamamlanamadı. Lütfen tekrar deneyin." }); }
 });
