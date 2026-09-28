@@ -12,7 +12,8 @@ public sealed class OrderService(
     IConfiguration config)
 {
     private const int DeadlockErrorNumber = 1205;
-    private const int MaxDeadlockAttempts = 3;
+    private const int SqlCommandTimeoutErrorNumber = -2;
+    private const int MaxTransientAttempts = 3;
     private readonly int requestLockTimeoutMilliseconds =
         config.GetValue<int?>("DatabaseLocks:OrderTimeoutMilliseconds") ?? 30_000;
 
@@ -23,17 +24,17 @@ public sealed class OrderService(
 
         ValidateCheckout(input);
 
-        for (var attempt = 1; attempt <= MaxDeadlockAttempts; attempt++)
+        for (var attempt = 1; attempt <= MaxTransientAttempts; attempt++)
         {
             try
             {
                 return await CheckoutOnce(userId, input);
             }
-            catch (Exception ex) when (IsDeadlock(ex) && attempt < MaxDeadlockAttempts)
+            catch (Exception ex) when (IsTransientSqlFailure(ex) && attempt < MaxTransientAttempts)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(40 * attempt));
             }
-            catch (Exception ex) when (IsDeadlock(ex))
+            catch (Exception ex) when (IsTransientSqlFailure(ex))
             {
                 throw new BusinessException(
                     "Sipariş işlemi geçici yoğunluk nedeniyle tamamlanamadı. Aynı siparişi biraz sonra tekrar deneyin.",
@@ -45,9 +46,10 @@ public sealed class OrderService(
         throw new InvalidOperationException("Sipariş yeniden deneme döngüsü beklenmeyen şekilde sona erdi.");
     }
 
-    private static bool IsDeadlock(Exception ex) =>
-        ex is SqlException { Number: DeadlockErrorNumber }
-        || ex.InnerException is not null && IsDeadlock(ex.InnerException);
+    private static bool IsTransientSqlFailure(Exception ex) =>
+        ex is SqlException sqlException
+            && sqlException.Number is DeadlockErrorNumber or SqlCommandTimeoutErrorNumber
+        || ex.InnerException is not null && IsTransientSqlFailure(ex.InnerException);
 
     private static void ValidateCheckout(CheckoutInput input)
     {
@@ -273,6 +275,28 @@ public sealed class OrderService(
         if (status is not ("Onaylandı" or "Reddedildi"))
             throw new BusinessException("Geçersiz sipariş durumu.");
 
+        for (var attempt = 1; attempt <= MaxTransientAttempts; attempt++)
+        {
+            try
+            {
+                await ChangeStatusOnce(id, status);
+                return;
+            }
+            catch (Exception ex) when (IsTransientSqlFailure(ex) && attempt < MaxTransientAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(40 * attempt));
+            }
+            catch (Exception ex) when (IsTransientSqlFailure(ex))
+            {
+                throw new BusinessException("Sipariş durumu geçici veritabanı yoğunluğu nedeniyle değiştirilemedi. Biraz sonra tekrar deneyin.", 503, "ORDER_STATUS_RETRY");
+            }
+        }
+
+        throw new InvalidOperationException("Sipariş durumu yeniden deneme döngüsü beklenmeyen şekilde sona erdi.");
+    }
+
+    private async Task ChangeStatusOnce(int id, string status)
+    {
         await using var db = await dbFactory.CreateDbContextAsync();
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
@@ -288,11 +312,7 @@ public sealed class OrderService(
         }
 
         if (order.Status == "Reddedildi")
-        {
-            throw new BusinessException(
-                "Reddedilen sipariş yeniden açılamaz. Yeni sipariş oluşturun.",
-                409);
-        }
+            throw new BusinessException("Reddedilen sipariş yeniden açılamaz. Yeni sipariş oluşturun.", 409);
 
         if (status == "Reddedildi")
             await RestoreStock(db, id);
