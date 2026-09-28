@@ -1,4 +1,4 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -6,32 +6,29 @@ namespace U1.Business.Endpoints;
 
 public static partial class AdminEndpoints
 {
-    private const string ProductValues =
-        "Code=@Code,Name=@Name,Description=@Description,Brand=@Brand,ManufacturerCode=@ManufacturerCode,SpecialCode1=@SpecialCode1,SpecialCode2=@SpecialCode2,ImageUrl=@ImageUrl,Stock=@Stock,CriticalStock=@CriticalStock,Price=@Price,CategoryId=@CategoryId";
-
     private static void MapProducts(RouteGroupBuilder api)
     {
         api.MapPost(
             "/products",
-            async (ProductInput input, Database database) =>
+            async (ProductInput input, BusinessDbContext db) =>
             {
-                await ValidateProduct(input, database);
-                using var db = database.Open();
-                var id = await db.ExecuteScalarAsync<int>(
-                    "INSERT INTO Products(Code,Name,Description,Brand,ManufacturerCode,SpecialCode1,SpecialCode2,ImageUrl,Stock,CriticalStock,Price,CategoryId) OUTPUT INSERTED.Id VALUES(@Code,@Name,@Description,@Brand,@ManufacturerCode,@SpecialCode1,@SpecialCode2,@ImageUrl,@Stock,@CriticalStock,@Price,@CategoryId)",
-                    input
-                );
-                return Results.Ok(new { id });
+                await ValidateProduct(input, db);
+                var product = ToProduct(input);
+                db.Products.Add(product);
+                await db.SaveChangesAsync();
+                return Results.Ok(new { id = product.Id });
             }
         );
+
         api.MapPut(
             "/products/{id:int}",
-            async (int id, ProductUpdateInput input, Database database) =>
+            async (int id, ProductUpdateInput input, BusinessDbContext db) =>
             {
                 if (input is null)
                     throw new BusinessException("Ürün bilgileri gerekli.");
                 if (string.IsNullOrWhiteSpace(input.Version))
                     throw new BusinessException("Ürün sürümü gerekli.");
+
                 byte[] version;
                 try
                 {
@@ -41,38 +38,38 @@ public static partial class AdminEndpoints
                 {
                     throw new BusinessException("Ürün sürümü geçersiz.");
                 }
+
                 if (version.Length != 8)
                     throw new BusinessException("Ürün sürümü geçersiz.");
-                await ValidateProduct(input, database);
-                using var db = database.Open();
-                var args = new DynamicParameters(input);
-                args.Add("Id", id);
-                args.Add("ExpectedVersion", version);
-                if (
-                    await db.ExecuteAsync(
-                        "UPDATE Products SET "
-                            + ProductValues
-                            + " WHERE Id=@Id AND RowVersion=@ExpectedVersion",
-                        args
-                    ) == 0
-                )
+
+                await ValidateProduct(input, db);
+                var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
+                    ?? throw new BusinessException("Ürün bulunamadı.", 404);
+
+                db.Entry(product).Property(x => x.RowVersion).OriginalValue = version;
+                Apply(input, product);
+
+                try
                 {
-                    if (
-                        await db.ExecuteScalarAsync<int>(
-                            "SELECT COUNT(*) FROM Products WHERE Id=@id",
-                            new { id }
-                        ) == 0
-                    )
+                    await db.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    db.ChangeTracker.Clear();
+                    if (!await db.Products.AsNoTracking().AnyAsync(x => x.Id == id))
                         throw new BusinessException("Ürün bulunamadı.", 404);
+
                     throw new BusinessException(
                         "Ürün başka bir işlemde değişti. Girdilerinizi koruyarak güncel ürünü yeniden yükleyin.",
                         409,
                         "PRODUCT_CHANGED"
                     );
                 }
+
                 return Results.Ok();
             }
         );
+
         api.MapPost(
             "/images",
             async (HttpRequest request, IWebHostEnvironment env) =>
@@ -115,15 +112,17 @@ public static partial class AdminEndpoints
         );
     }
 
-    private static async Task ValidateProduct(ProductInput input, Database database)
+    private static async Task ValidateProduct(ProductInput input, BusinessDbContext db)
     {
         if (input is null)
             throw new BusinessException("Ürün bilgileri gerekli.");
         input.SpecialCode1 ??= "";
         input.SpecialCode2 ??= "";
         Rules.Validate(input);
+
         if (decimal.Round(input.Price, 2) != input.Price)
             throw new BusinessException("Fiyat en fazla iki ondalık basamak içermeli.");
+
         if (
             string.IsNullOrWhiteSpace(input.ImageUrl)
             || !input.ImageUrl.StartsWith("/images/")
@@ -134,13 +133,31 @@ public static partial class AdminEndpoints
                 )
         )
             throw new BusinessException("Görsel adresi bir yükleme yolu veya HTTPS adresi olmalı.");
-        using var db = database.Open();
-        if (
-            await db.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM Categories WHERE Id=@CategoryId",
-                input
-            ) == 0
-        )
+
+        if (!await db.Categories.AsNoTracking().AnyAsync(x => x.Id == input.CategoryId))
             throw new BusinessException("Geçerli bir kategori seçin.");
+    }
+
+    private static Product ToProduct(ProductInput input)
+    {
+        var product = new Product();
+        Apply(input, product);
+        return product;
+    }
+
+    private static void Apply(ProductInput input, Product product)
+    {
+        product.Code = input.Code;
+        product.Name = input.Name;
+        product.Description = input.Description;
+        product.Brand = input.Brand;
+        product.ManufacturerCode = input.ManufacturerCode;
+        product.SpecialCode1 = input.SpecialCode1;
+        product.SpecialCode2 = input.SpecialCode2;
+        product.ImageUrl = input.ImageUrl;
+        product.Stock = input.Stock;
+        product.CriticalStock = input.CriticalStock;
+        product.Price = input.Price;
+        product.CategoryId = input.CategoryId;
     }
 }
