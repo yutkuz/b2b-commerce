@@ -1,6 +1,6 @@
 # U1 Business — B2B bayi sipariş uygulaması
 
-U1 Business, bayi ve yöneticilerin kullandığı küçük bir B2B e-ticaret uygulamasıdır. Bayi ürünleri arar, sepete ekler ve sipariş oluşturur. Yönetici ürünleri ve bayi hesaplarını düzenler, siparişleri onaylar veya reddeder. Uygulama **ASP.NET Core 10**, **SQL Server**, **Dapper** ve HTML/CSS/JavaScript ile geliştirilmiştir. Ayrı frontend sunucusu veya Node.js kurulumu gerekmez.
+U1 Business, bayi ve yöneticilerin kullandığı küçük bir B2B e-ticaret uygulamasıdır. Bayi ürünleri arar, sepete ekler ve sipariş oluşturur. Yönetici ürünleri ve bayi hesaplarını düzenler, siparişleri onaylar veya reddeder. Uygulama **ASP.NET Core 10**, **Entity Framework Core**, **SQL Server** ve HTML/CSS/JavaScript ile geliştirilmiştir. Ayrı frontend sunucusu veya Node.js kurulumu gerekmez.
 
 Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL Server LocalDB kullanır. Demo ürünler, fiyatlar, kullanıcılar ve firma metinleri gerçek ticari veri değildir. Uygulama ödeme veya cari hesap sistemi değildir.
 
@@ -10,7 +10,7 @@ Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL 
 | --- | --- |
 | .NET 10 / ASP.NET Core Minimal API | Web sunucusu, API ve kimlik doğrulama |
 | SQL Server; yerel geliştirmede Express LocalDB | Kalıcı kullanıcı, ürün, sepet ve sipariş verileri |
-| Dapper ve Microsoft.Data.SqlClient | Parametreli SQL sorguları ve SQL Server bağlantısı |
+| Entity Framework Core SQL Server ve Microsoft.Data.SqlClient | Uygulama veri erişimi, transaction yönetimi ve SQL Server'a özgü kilit/bağlantı işlemleri |
 | HTML, CSS, JavaScript ES modules | Tarayıcı arayüzü; ayrı frontend derlemesi yok |
 
 **Mimari tercih:** Tek uygulama hem arayüzü hem API'yi aynı adresten sunar. Kod, `Domain`, `Data`, `Services`, `Endpoints` ve `wwwroot` klasörleriyle sorumluluklara ayrılmıştır. Katalog arama ve sayfalama SQL Server'da yapılır; ürün tablosunun kolonları veritabanındaki ayarlardan oluşturulur. Sipariş oluşturma ve stok düşümü tek SQL transaction içinde tutulur. Küçük proje ölçeği için ayrı frontend sunucusu veya mikroservis kullanılmamıştır. Ayrıntılar aşağıdaki “Teknik yapı ve iş kuralları” bölümündedir.
@@ -113,7 +113,7 @@ Varsayılan bağlantı `src/U1.Business/appsettings.json` içindedir:
 Server=(localdb)\MSSQLLocalDB;Database=U1Business;Integrated Security=true;TrustServerCertificate=true;Connect Timeout=15
 ```
 
-Uygulama ilk açılışta veritabanını, tabloları ve indeksleri oluşturur; dört kategori, 12 temsili ürün ve duyurular ekler. `Data/001-schema.sql` ilk şemadır; diğer SQL dosyaları var olan veriyi koruyarak sürümlü yükseltme yapar. Demo kurulum transaction içinde yürür. Dolu özel veritabanına örnek kayıtları zorla eklemez. Yükseltme öncesi mevcut veritabanının yedeğini alın.
+Uygulama ilk açılışta veritabanını, tabloları ve indeksleri oluşturur; dört kategori, 12 temsili ürün ve duyurular ekler. Şema yönetiminde bilinçli olarak **SQL-first migration** yaklaşımı kullanılır: `Data/001-schema.sql` başlangıç şemasıdır, sonraki numaralı SQL dosyaları mevcut veriyi koruyarak sürümlü yükseltme yapar ve uygulama hangi sürümlerin uygulandığını `SchemaVersions` tablosundan izler. EF Core bu projede runtime ORM'dir; şema oluşturma/yükseltme için `dotnet ef migrations` kullanılmaz. `BusinessDbContext` içindeki mapping, index ve foreign-key metadata'sı bu SQL şemasıyla senkron tutulmalıdır. Demo kurulum transaction içinde yürür. Dolu özel veritabanına örnek kayıtları zorla eklemez. Yükseltme öncesi mevcut veritabanının yedeğini alın.
 
 Başka SQL Server için `src/U1.Business/appsettings.Local.json` dosyasını kendiniz oluşturabilirsiniz:
 
@@ -131,7 +131,7 @@ Eski kurulumda yarım kalmış demo kayıtları saptanırsa uygulama açıklayı
 
 ## Teknik yapı ve iş kuralları
 
-Tek ASP.NET Core uygulaması hem sayfaları hem `/api` yollarını sunar. `Program.cs` sunucu, cookie oturumu, rol denetimi, CSRF koruması ve hata yanıtlarını kurar. `Endpoints/` kimlik, katalog, sepet/sipariş ve yönetim API'lerini içerir. `Services/OrderService.cs` kritik sipariş işlemini transaction içinde yürütür. `Data/Database.cs` SQL bağlantısı, şema ve örnek kurulumu yönetir. `wwwroot/` tarayıcı arayüzüdür.
+Tek ASP.NET Core uygulaması hem sayfaları hem `/api` yollarını sunar. `Program.cs` sunucu, cookie oturumu, rol denetimi, CSRF koruması ve hata yanıtlarını kurar. `Endpoints/` kimlik, katalog, sepet/sipariş ve yönetim API'lerini içerir. `BusinessDbContext` EF Core modelini ve SQL şemasıyla eşleşen temel index/ilişki metadata'sını tanımlar. `Services/OrderService.cs` kritik sipariş işlemini transaction içinde yürütür. `Data/Database.cs` veritabanı oluşturma, SQL-first şema yükseltme ve demo kurulumunu yönetir. SQL Server'a özgü `UPDLOCK`, `HOLDLOCK` ve `sp_getapplock` gereken kritik yerlerde EF Core üzerinden ham SQL/ADO.NET kullanılır. `wwwroot/` tarayıcı arayüzüdür.
 
 Users, Categories, Products, Carts, CartItems, Orders, OrderItems, GridColumns, Banners, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
 
@@ -165,20 +165,21 @@ dotnet restore U1.Business.sln
 dotnet build U1.Business.sln --no-restore -warnaserror
 ```
 
-API kabul testleri `tests/api_smoke.py` dosyasındadır. Testler ayrı bir `U1Business_Test_*` LocalDB veritabanında çalıştırılır; mevcut `U1Business` veritabanına uygulanmaz.
+API kabul testleri `tests/U1.Business.Tests` xUnit projesindedir. Testler her süreçte benzersiz bir `U1Business_CI_*` LocalDB veritabanı kullanır; varsayılan `U1Business` veritabanına dokunmaz. Eski Python smoke paketi kaldırılmıştır; API davranışı için tek doğruluk kaynağı xUnit testleridir.
 
-Yerel API kabul testi için Python 3 ve LocalDB gerekir. Betik her çalıştırmada yeni ve benzersiz bir `U1Business_Test_*` veritabanı oluşturur; bağlantı adını uygulama korumasıyla doğrular. İnceleme için veritabanını kendiliğinden silmez:
+Yerel doğrulama:
 
 ```powershell
 dotnet build U1.Business.sln --configuration Release -warnaserror
-python tests/api_smoke.py
+dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-build --configuration Release
+dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release
 ```
 
-GitHub Actions temiz Windows ortamında NuGet geri yükleme, Release derleme ve JavaScript sözdizimi kontrolünü çalıştırır. LocalDB gerektiren API testi yereldeki ayrı veritabanında çalıştırılır.
+GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test projelerinin Release derlemesi, JavaScript sözdizimi kontrolü, benzersiz LocalDB üzerinde API integration testleri ve Playwright Chromium ile tarayıcı davranış testlerini çalıştırır.
 
 ### Doğrulanan kapsam
 
-27 Eylül 2026 tarihinde .NET SDK 10.0.401 ve SQL Server Express LocalDB ile Release derlemesi 0 hata ve 0 uyarıyla tamamlandı; 21 API kabul kontrolü geçti. Kontroller erişim yetkilerini, CSRF korumasını, ürün ve telefon doğrulamasını, özel kod aramasını, sepet toplamını, sipariş öncesi stok kontrolünü, eşzamanlı düzenleme sürümünü, yinelenen sipariş isteğini, fiyat geçmişini ve red sonrası stok iadesini kapsar.
+CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün `rowversion` çakışması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red sonrası stok iadesinin yalnız bir kez yapılması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
 
 Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması ayrıca kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
 
@@ -187,7 +188,7 @@ Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipa
 1. Visual Studio 2026 ve **ASP.NET and web development** iş yükünü kurun. .NET 10 SDK'nın yüklü olduğunu `dotnet --list-sdks` ile kontrol edin. Terminalden çalıştırmak için Visual Studio yerine yalnız SDK yeterlidir.
 2. SQL Server Express LocalDB kurun veya erişebildiğiniz SQL Server bağlantısını yapılandırın. LocalDB kontrolü: `sqllocaldb info MSSQLLocalDB`. LocalDB kullanıyorsanız gerekirse `sqllocaldb start MSSQLLocalDB` ile başlatın.
 3. GitHub deposuna erişimi olan hesabınızla `git clone https://github.com/yutkuz/b2b-commerce.git` komutunu çalıştırın veya kaynak ZIP'ini indirin.
-4. `U1.Business.sln` dosyasını açın. Dapper ve Microsoft.Data.SqlClient paketleri proje dosyasındaki `PackageReference` kayıtlarından NuGet tarafından geri yüklenir; paketleri elle yeniden eklemeniz gerekmez.
+4. `U1.Business.sln` dosyasını açın. Entity Framework Core SQL Server ve Microsoft.Data.SqlClient paketleri proje dosyasındaki `PackageReference` kayıtlarından NuGet tarafından geri yüklenir; paketleri elle yeniden eklemeniz gerekmez.
 5. `http` profilini seçip F5'e basın. İlk açılış veritabanını ve geliştirme örneklerini oluşturur.
 6. `http://localhost:5080` adresine gidip yukarıdaki demo hesaplarla giriş yapın.
 
@@ -208,4 +209,4 @@ Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipa
 
 Gerçek parolalar, yerel bağlantı ayarları, yüklenen görseller ve derleme çıktıları Git'e alınmaz.
 
-Temiz yerel Git klonunda, ayrı NuGet paket klasörüyle geri yükleme ve Release derlemesi ayrıca doğrulandı. Bu klonda 21 API testi tekrar başarıyla tamamlandı; önceki bin/obj çıktılarına ihtiyaç duyulmadı.
+Temiz bir klonda `dotnet restore`, Release build ve iki .NET test projesi ile doğrulama yapılabilir; önceki `bin`/`obj` çıktıları gerekli değildir.
