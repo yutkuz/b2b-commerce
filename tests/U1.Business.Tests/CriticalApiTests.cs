@@ -4,9 +4,9 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using U1.Business.Data;
-using Microsoft.Extensions.Configuration;
 using Xunit;
 
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
@@ -61,118 +61,383 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     }
 }
 
-public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
+public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
     public async Task Test_database_is_unique_and_isolated_from_the_default_database()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        using var client = NewClient();
 
         var environment = await client.GetFromJsonAsync<JsonElement>("/api/test-environment");
 
         Assert.StartsWith("U1Business_CI_", ApiFactory.DatabaseName);
         Assert.NotEqual("U1Business", ApiFactory.DatabaseName);
-        Assert.Equal(ApiFactory.DatabaseName, Property(environment, "database").GetString());
+        Assert.Equal(ApiFactory.DatabaseName, ApiTest.Property(environment, "database").GetString());
     }
 
     [Fact]
+    public async Task Authentication_csrf_and_admin_authorization_are_enforced()
+    {
+        using var guest = NewClient();
+        var anonymousCatalog = await guest.GetAsync("/api/products");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousCatalog.StatusCode);
+
+        var anonymousToken = await ApiTest.GetCsrf(guest);
+        var invalidPhone = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/auth/register", new
+        {
+            firstName = "CI",
+            lastName = "Invalid",
+            email = $"ci-{Guid.NewGuid():N}@example.test",
+            phone = "----------",
+            company = "CI",
+            password = "CITest!2026"
+        }, anonymousToken);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidPhone.StatusCode);
+
+        var email = $"ci-{Guid.NewGuid():N}@example.test";
+        var register = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/auth/register", new
+        {
+            firstName = "CI",
+            lastName = "Dealer",
+            email,
+            phone = "05321234567",
+            company = "CI",
+            password = "CITest!2026"
+        }, anonymousToken);
+        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+
+        var products = await guest.GetFromJsonAsync<JsonElement>("/api/products?q=DG-001");
+        var productId = ApiTest.Property(ApiTest.Property(products, "items")[0], "id").GetInt32();
+
+        var withoutCsrf = await ApiTest.SendJson(
+            guest,
+            HttpMethod.Post,
+            "/api/cart",
+            new { productId, quantity = 1 },
+            csrf: null);
+        Assert.Equal(HttpStatusCode.BadRequest, withoutCsrf.StatusCode);
+
+        var dealerToken = await ApiTest.GetCsrf(guest);
+        var forbidden = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/admin/products", ApiTest.ProductPayload(), dealerToken);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+
+        var nullCart = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/cart", body: null, dealerToken);
+        Assert.Equal(HttpStatusCode.BadRequest, nullCart.StatusCode);
+
+        var missingProduct = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/cart",
+            new { productId = int.MaxValue, quantity = 1 }, dealerToken);
+        Assert.Equal(HttpStatusCode.NotFound, missingProduct.StatusCode);
+    }
+
+    [Fact]
+    public async Task Product_validation_search_and_rowversion_concurrency_are_preserved()
+    {
+        using var admin = NewClient();
+        var adminToken = await ApiTest.LoginAdmin(admin);
+        var code = "CI-" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+
+        var invalidPrecision = await ApiTest.SendJson(admin, HttpMethod.Post, "/api/admin/products",
+            ApiTest.ProductPayload(code, price: 100.123m), adminToken);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidPrecision.StatusCode);
+
+        var negativeStock = await ApiTest.SendJson(admin, HttpMethod.Post, "/api/admin/products",
+            ApiTest.ProductPayload(code, stock: -1), adminToken);
+        Assert.Equal(HttpStatusCode.BadRequest, negativeStock.StatusCode);
+
+        var created = await ApiTest.SendJson(admin, HttpMethod.Post, "/api/admin/products",
+            ApiTest.ProductPayload(code), adminToken);
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var createdBody = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var productId = ApiTest.Property(createdBody, "id").GetInt32();
+
+        var search = await admin.GetFromJsonAsync<JsonElement>("/api/products?q=CI-SPECIAL");
+        Assert.Contains(ApiTest.Property(search, "items").EnumerateArray(),
+            item => ApiTest.Property(item, "id").GetInt32() == productId);
+
+        var initial = await admin.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        var version = ApiTest.Property(initial, "rowVersion").GetString();
+
+        var update = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
+            ApiTest.ProductPayload(code, stock: 4, version: version), adminToken);
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+
+        var stale = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
+            ApiTest.ProductPayload(code, stock: 3, version: version), adminToken);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        var staleBody = await stale.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("PRODUCT_CHANGED", ApiTest.Property(staleBody, "code").GetString());
+    }
+
+    [Fact]
+    public async Task Checkout_idempotency_price_snapshot_authorization_and_stock_restore_are_preserved()
+    {
+        await factory.ResetCheckoutState();
+
+        using var admin = NewClient();
+        var adminToken = await ApiTest.LoginAdmin(admin);
+        var code = "CI-" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+
+        var created = await ApiTest.SendJson(admin, HttpMethod.Post, "/api/admin/products",
+            ApiTest.ProductPayload(code, stock: 5, price: 100m), adminToken);
+        var createdBody = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var productId = ApiTest.Property(createdBody, "id").GetInt32();
+
+        using var buyer = NewClient();
+        var buyerToken = await ApiTest.RegisterDealer(buyer);
+
+        var add = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/cart",
+            new { productId, quantity = 2 }, buyerToken);
+        Assert.Equal(HttpStatusCode.OK, add.StatusCode);
+
+        var cart = await buyer.GetFromJsonAsync<JsonElement>("/api/cart");
+        Assert.Equal(2, ApiTest.Property(cart, "count").GetInt32());
+        Assert.Equal(200m, ApiTest.Property(cart, "total").GetDecimal());
+
+        var initial = await admin.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        var reduceStock = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
+            ApiTest.ProductPayload(code, stock: 1, price: 100m,
+                version: ApiTest.Property(initial, "rowVersion").GetString()), adminToken);
+        Assert.Equal(HttpStatusCode.OK, reduceStock.StatusCode);
+
+        var requestId = Guid.NewGuid();
+        var checkoutBody = new
+        {
+            requestId,
+            note = "CI order",
+            lines = new[] { new { productId, quantity = 2, unitPrice = 100m } }
+        };
+
+        var insufficient = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/orders", checkoutBody, buyerToken);
+        Assert.Equal(HttpStatusCode.Conflict, insufficient.StatusCode);
+        var preservedCart = await buyer.GetFromJsonAsync<JsonElement>("/api/cart");
+        Assert.Equal(2, ApiTest.Property(preservedCart, "count").GetInt32());
+
+        var current = await admin.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        var restoreStock = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
+            ApiTest.ProductPayload(code, stock: 5, price: 100m,
+                version: ApiTest.Property(current, "rowVersion").GetString()), adminToken);
+        Assert.Equal(HttpStatusCode.OK, restoreStock.StatusCode);
+
+        var orderResponse = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/orders", checkoutBody, buyerToken);
+        Assert.Equal(HttpStatusCode.OK, orderResponse.StatusCode);
+        var order = await orderResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var orderId = ApiTest.Property(order, "id").GetInt32();
+
+        var repeated = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/orders", checkoutBody, buyerToken);
+        Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
+        var repeatedOrder = await repeated.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(orderId, ApiTest.Property(repeatedOrder, "id").GetInt32());
+
+        var afterCheckout = await buyer.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        Assert.Equal(3, ApiTest.Property(afterCheckout, "stock").GetInt32());
+        var emptyCart = await buyer.GetFromJsonAsync<JsonElement>("/api/cart");
+        Assert.Equal(0, ApiTest.Property(emptyCart, "count").GetInt32());
+
+        var beforePriceChange = await admin.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        var priceChange = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
+            ApiTest.ProductPayload(code, stock: 3, price: 120m,
+                version: ApiTest.Property(beforePriceChange, "rowVersion").GetString()), adminToken);
+        Assert.Equal(HttpStatusCode.OK, priceChange.StatusCode);
+
+        var orderDetail = await buyer.GetFromJsonAsync<JsonElement>($"/api/orders/{orderId}");
+        Assert.Equal(100m,
+            ApiTest.Property(ApiTest.Property(orderDetail, "items")[0], "unitPrice").GetDecimal());
+
+        var reject = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/orders/{orderId}/status",
+            new { status = "Reddedildi" }, adminToken);
+        Assert.Equal(HttpStatusCode.OK, reject.StatusCode);
+
+        var rejectedOrder = await buyer.GetFromJsonAsync<JsonElement>($"/api/orders/{orderId}");
+        Assert.Equal("Reddedildi",
+            ApiTest.Property(ApiTest.Property(rejectedOrder, "order"), "status").GetString());
+        var afterReject = await buyer.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        Assert.Equal(5, ApiTest.Property(afterReject, "stock").GetInt32());
+
+        var repeatReject = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/orders/{orderId}/status",
+            new { status = "Reddedildi" }, adminToken);
+        Assert.Equal(HttpStatusCode.OK, repeatReject.StatusCode);
+        var afterRepeatReject = await buyer.GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+        Assert.Equal(5, ApiTest.Property(afterRepeatReject, "stock").GetInt32());
+
+        using var otherDealer = NewClient();
+        await ApiTest.RegisterDealer(otherDealer);
+        var foreignOrder = await otherDealer.GetAsync($"/api/orders/{orderId}");
+        Assert.Equal(HttpStatusCode.NotFound, foreignOrder.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_grid_banner_and_user_session_invalidation_are_preserved()
+    {
+        using var admin = NewClient();
+        var adminToken = await ApiTest.LoginAdmin(admin);
+
+        var grid = await admin.GetFromJsonAsync<JsonElement>("/api/admin/grid");
+        var gridUpdate = await ApiTest.SendJson(admin, HttpMethod.Put, "/api/admin/grid", grid, adminToken);
+        Assert.Equal(HttpStatusCode.OK, gridUpdate.StatusCode);
+
+        var banner = new
+        {
+            title = "CI duyuru",
+            subtitle = "İlk metin",
+            buttonText = "Ürünleri aç",
+            searchTerm = "CI",
+            isActive = true,
+            position = 3
+        };
+        var bannerCreate = await ApiTest.SendJson(admin, HttpMethod.Post, "/api/admin/banners", banner, adminToken);
+        Assert.Equal(HttpStatusCode.OK, bannerCreate.StatusCode);
+        var bannerCreated = await bannerCreate.Content.ReadFromJsonAsync<JsonElement>();
+        var bannerId = ApiTest.Property(bannerCreated, "id").GetInt32();
+
+        var bannerUpdate = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/banners/{bannerId}", new
+        {
+            banner.title,
+            subtitle = "Güncel metin",
+            banner.buttonText,
+            banner.searchTerm,
+            banner.isActive,
+            banner.position
+        }, adminToken);
+        Assert.Equal(HttpStatusCode.OK, bannerUpdate.StatusCode);
+
+        var banners = await admin.GetFromJsonAsync<JsonElement>("/api/admin/banners");
+        Assert.Contains(banners.EnumerateArray(), item =>
+            ApiTest.Property(item, "id").GetInt32() == bannerId
+            && ApiTest.Property(item, "subtitle").GetString() == "Güncel metin");
+
+        using var dealer = NewClient();
+        var dealerEmail = $"ci-{Guid.NewGuid():N}@example.test";
+        await ApiTest.RegisterDealer(dealer, dealerEmail);
+
+        var users = await admin.GetFromJsonAsync<JsonElement>(
+            "/api/admin/users?q=" + Uri.EscapeDataString(dealerEmail));
+        var managed = ApiTest.Property(users, "items").EnumerateArray()
+            .Single(x => ApiTest.Property(x, "email").GetString() == dealerEmail);
+
+        var userUpdate = await ApiTest.SendJson(admin, HttpMethod.Put,
+            $"/api/admin/users/{ApiTest.Property(managed, "id").GetInt32()}", new
+            {
+                firstName = ApiTest.Property(managed, "firstName").GetString(),
+                lastName = ApiTest.Property(managed, "lastName").GetString(),
+                email = ApiTest.Property(managed, "email").GetString(),
+                phone = ApiTest.Property(managed, "phone").GetString(),
+                company = "Updated CI Dealer",
+                isActive = true,
+                newPassword = "",
+                version = ApiTest.Property(managed, "version").GetInt32()
+            }, adminToken);
+        Assert.Equal(HttpStatusCode.OK, userUpdate.StatusCode);
+
+        var oldSession = await dealer.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, oldSession.StatusCode);
+    }
+
+    private HttpClient NewClient() =>
+        factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+}
+
+public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture<ApiFactory>
+{
+    [Fact]
     public async Task Eight_concurrent_dealers_can_checkout_without_server_errors()
     {
-        using var bootstrap = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
         await factory.ResetCheckoutState();
 
         var clients = Enumerable.Range(0, 8)
             .Select(_ => factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true }))
             .ToArray();
 
-        var sessionTokens = new string[clients.Length];
-        for (var i = 0; i < clients.Length; i++)
+        try
         {
-            var anonymousToken = await GetCsrf(clients[i]);
-            var email = $"ci-{Guid.NewGuid():N}@example.test";
-            var register = await SendJson(clients[i], HttpMethod.Post, "/api/auth/register", new
+            var sessionTokens = new string[clients.Length];
+            for (var i = 0; i < clients.Length; i++)
             {
-                firstName = "CI",
-                lastName = $"Dealer{i}",
-                email,
-                phone = $"05321234{i + 100}",
-                company = $"CI Dealer {i}",
-                password = "CITest!2026"
-            }, anonymousToken);
-            Assert.Equal(HttpStatusCode.OK, register.StatusCode);
-            sessionTokens[i] = await GetCsrf(clients[i]);
+                sessionTokens[i] = await ApiTest.RegisterDealer(clients[i]);
+            }
+
+            var products = await clients[0].GetFromJsonAsync<JsonElement>("/api/products?q=DG-001");
+            var product = ApiTest.Property(products, "items")[0];
+            var productId = ApiTest.Property(product, "id").GetInt32();
+            var price = ApiTest.Property(product, "price").GetDecimal();
+
+            for (var i = 0; i < clients.Length; i++)
+            {
+                var cart = await ApiTest.SendJson(clients[i], HttpMethod.Post, "/api/cart",
+                    new { productId, quantity = 1 }, sessionTokens[i]);
+                Assert.Equal(HttpStatusCode.OK, cart.StatusCode);
+            }
+
+            var requests = clients.Select((client, i) =>
+                ApiTest.SendJson(client, HttpMethod.Post, "/api/orders", new
+                {
+                    requestId = Guid.NewGuid(),
+                    note = "CI concurrent checkout",
+                    lines = new[] { new { productId, quantity = 1, unitPrice = price } }
+                }, sessionTokens[i]));
+
+            var responses = await Task.WhenAll(requests);
+
+            var failures = new List<string>();
+            foreach (var response in responses)
+            {
+                if (response.StatusCode != HttpStatusCode.OK)
+                    failures.Add($"{(int)response.StatusCode} {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+                response.Dispose();
+            }
+
+            Assert.True(failures.Count == 0, "Concurrent checkout failures:\n" + string.Join("\n", failures));
+
+            var refreshed = await clients[0].GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
+            Assert.Equal(16, ApiTest.Property(refreshed, "stock").GetInt32());
         }
-
-        var products = await clients[0].GetFromJsonAsync<JsonElement>("/api/products?q=DG-001");
-        var product = Property(products, "items")[0];
-        var productId = Property(product, "id").GetInt32();
-        var price = Property(product, "price").GetDecimal();
-
-        for (var i = 0; i < clients.Length; i++)
+        finally
         {
-            var cart = await SendJson(clients[i], HttpMethod.Post, "/api/cart",
-                new { productId, quantity = 1 }, sessionTokens[i]);
-            Assert.Equal(HttpStatusCode.OK, cart.StatusCode);
+            foreach (var client in clients)
+                client.Dispose();
         }
-
-        var requests = clients.Select((client, i) =>
-            SendJson(client, HttpMethod.Post, "/api/orders", new
-            {
-                requestId = Guid.NewGuid(),
-                note = "CI concurrent checkout",
-                lines = new[] { new { productId, quantity = 1, unitPrice = price } }
-            }, sessionTokens[i]));
-
-        var responses = await Task.WhenAll(requests);
-
-        var failures = new List<string>();
-        foreach (var response in responses)
-            if (response.StatusCode != HttpStatusCode.OK)
-                failures.Add($"{(int)response.StatusCode} {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
-        Assert.True(failures.Count == 0, "Concurrent checkout failures:\n" + string.Join("\n", failures));
-
-        var refreshed = await clients[0].GetFromJsonAsync<JsonElement>($"/api/products/{productId}");
-        Assert.Equal(16, Property(refreshed, "stock").GetInt32());
     }
+}
 
+public sealed class UserConcurrencyTests(ApiFactory factory) : IClassFixture<ApiFactory>
+{
     [Fact]
     public async Task Stale_admin_profile_update_cannot_revert_a_new_password()
     {
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var adminToken = await ApiTest.LoginAdmin(admin);
 
-        var anonymousToken = await GetCsrf(admin);
-        var login = await SendJson(admin, HttpMethod.Post, "/api/auth/login",
-            new { email = "admin@u1.local", password = "U1Admin!2026" }, anonymousToken);
-        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        using var dealerClient = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var dealerEmail = $"ci-{Guid.NewGuid():N}@example.test";
+        await ApiTest.RegisterDealer(dealerClient, dealerEmail);
 
-        var adminToken = await GetCsrf(admin);
-        var users = await admin.GetFromJsonAsync<JsonElement>("/api/admin/users?q=bayi%40u1.local");
-        var dealer = Property(users, "items").EnumerateArray()
-            .Single(x => Property(x, "email").GetString() == "bayi@u1.local");
+        var users = await admin.GetFromJsonAsync<JsonElement>(
+            "/api/admin/users?q=" + Uri.EscapeDataString(dealerEmail));
+        var dealer = ApiTest.Property(users, "items").EnumerateArray()
+            .Single(x => ApiTest.Property(x, "email").GetString() == dealerEmail);
 
-        var id = Property(dealer, "id").GetInt32();
-        var version = Property(dealer, "version").GetInt32();
+        var id = ApiTest.Property(dealer, "id").GetInt32();
+        var version = ApiTest.Property(dealer, "version").GetInt32();
         var newPassword = "CINewPassword!2026";
 
-        var firstUpdate = await SendJson(admin, HttpMethod.Put, $"/api/admin/users/{id}", new
+        var firstUpdate = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/users/{id}", new
         {
-            firstName = Property(dealer, "firstName").GetString(),
-            lastName = Property(dealer, "lastName").GetString(),
-            email = Property(dealer, "email").GetString(),
-            phone = Property(dealer, "phone").GetString(),
-            company = Property(dealer, "company").GetString(),
+            firstName = ApiTest.Property(dealer, "firstName").GetString(),
+            lastName = ApiTest.Property(dealer, "lastName").GetString(),
+            email = ApiTest.Property(dealer, "email").GetString(),
+            phone = ApiTest.Property(dealer, "phone").GetString(),
+            company = ApiTest.Property(dealer, "company").GetString(),
             isActive = true,
             newPassword,
             version
         }, adminToken);
         Assert.Equal(HttpStatusCode.OK, firstUpdate.StatusCode);
 
-        var staleUpdate = await SendJson(admin, HttpMethod.Put, $"/api/admin/users/{id}", new
+        var staleUpdate = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/users/{id}", new
         {
-            firstName = Property(dealer, "firstName").GetString(),
-            lastName = Property(dealer, "lastName").GetString(),
-            email = Property(dealer, "email").GetString(),
-            phone = Property(dealer, "phone").GetString(),
+            firstName = ApiTest.Property(dealer, "firstName").GetString(),
+            lastName = ApiTest.Property(dealer, "lastName").GetString(),
+            email = ApiTest.Property(dealer, "email").GetString(),
+            phone = ApiTest.Property(dealer, "phone").GetString(),
             company = "Stale Admin Form",
             isActive = true,
             newPassword = (string?)null,
@@ -181,16 +446,66 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
 
         Assert.Equal(HttpStatusCode.Conflict, staleUpdate.StatusCode);
         var conflict = await staleUpdate.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("USER_CHANGED", Property(conflict, "code").GetString());
+        Assert.Equal("USER_CHANGED", ApiTest.Property(conflict, "code").GetString());
 
-        using var dealerClient = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
-        var dealerAnonymousToken = await GetCsrf(dealerClient);
-        var dealerLogin = await SendJson(dealerClient, HttpMethod.Post, "/api/auth/login",
-            new { email = "bayi@u1.local", password = newPassword }, dealerAnonymousToken);
+        using var relogin = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var loginToken = await ApiTest.GetCsrf(relogin);
+        var dealerLogin = await ApiTest.SendJson(relogin, HttpMethod.Post, "/api/auth/login",
+            new { email = dealerEmail, password = newPassword }, loginToken);
         Assert.Equal(HttpStatusCode.OK, dealerLogin.StatusCode);
     }
+}
 
-    private static JsonElement Property(JsonElement element, string name)
+internal static class ApiTest
+{
+    public static object ProductPayload(
+        string? code = null,
+        int stock = 5,
+        decimal price = 100m,
+        string? version = null) =>
+        new
+        {
+            code = code ?? "CI-" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant(),
+            name = "CI test ürünü",
+            description = "Aranabilir açıklama",
+            brand = "CI",
+            manufacturerCode = "CI-MAKER",
+            specialCode1 = "CI-SPECIAL",
+            specialCode2 = "",
+            imageUrl = "/images/product.svg",
+            stock,
+            criticalStock = 2,
+            price,
+            categoryId = 1,
+            version
+        };
+
+    public static async Task<string> LoginAdmin(HttpClient client)
+    {
+        var csrf = await GetCsrf(client);
+        var login = await SendJson(client, HttpMethod.Post, "/api/auth/login",
+            new { email = "admin@u1.local", password = "U1Admin!2026" }, csrf);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        return await GetCsrf(client);
+    }
+
+    public static async Task<string> RegisterDealer(HttpClient client, string? email = null)
+    {
+        var csrf = await GetCsrf(client);
+        var register = await SendJson(client, HttpMethod.Post, "/api/auth/register", new
+        {
+            firstName = "CI",
+            lastName = "Dealer",
+            email = email ?? $"ci-{Guid.NewGuid():N}@example.test",
+            phone = "05321234567",
+            company = "CI Dealer",
+            password = "CITest!2026"
+        }, csrf);
+        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+        return await GetCsrf(client);
+    }
+
+    public static JsonElement Property(JsonElement element, string name)
     {
         foreach (var property in element.EnumerateObject())
             if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -198,7 +513,7 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         throw new KeyNotFoundException($"JSON property '{name}' was not found.");
     }
 
-    private static async Task<string> GetCsrf(HttpClient client)
+    public static async Task<string> GetCsrf(HttpClient client)
     {
         var response = await client.GetAsync("/api/csrf");
         response.EnsureSuccessStatusCode();
@@ -206,14 +521,19 @@ public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFact
         return Property(body, "token").GetString()!;
     }
 
-    private static Task<HttpResponseMessage> SendJson(
-        HttpClient client, HttpMethod method, string path, object body, string csrf)
+    public static Task<HttpResponseMessage> SendJson(
+        HttpClient client,
+        HttpMethod method,
+        string path,
+        object? body,
+        string? csrf)
     {
         var request = new HttpRequestMessage(method, path)
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-CSRF-TOKEN", csrf);
+        if (csrf is not null)
+            request.Headers.Add("X-CSRF-TOKEN", csrf);
         return client.SendAsync(request);
     }
 }
