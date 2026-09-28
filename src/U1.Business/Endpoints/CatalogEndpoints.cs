@@ -1,4 +1,4 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -9,28 +9,46 @@ public static class CatalogEndpoints
     public static void MapCatalog(this WebApplication app)
     {
         var api = app.MapGroup("/api").RequireAuthorization();
+
         api.MapGet(
             "/catalog/meta",
-            async (Database database) =>
+            async (BusinessDbContext db) =>
             {
-                using var db = database.Open();
-                return new
-                {
-                    categories = await db.QueryAsync(
-                        "SELECT c.Id,c.Name,COUNT(p.Id) AS ProductCount FROM Categories c LEFT JOIN Products p ON p.CategoryId=c.Id GROUP BY c.Id,c.Name ORDER BY c.Id"
-                    ),
-                    brands = await db.QueryAsync<string>(
-                        "SELECT DISTINCT Brand FROM Products ORDER BY Brand"
-                    ),
-                    columns = await db.QueryAsync<GridColumn>(
-                        "SELECT * FROM GridColumns ORDER BY Position,Id"
-                    ),
-                    banners = await db.QueryAsync(
-                        "SELECT * FROM Banners WHERE IsActive=1 ORDER BY Position,Id"
-                    ),
-                };
+                var categories = await db.Categories
+                    .AsNoTracking()
+                    .OrderBy(c => c.Id)
+                    .Select(c => new
+                    {
+                        c.Id,
+                        c.Name,
+                        ProductCount = db.Products.Count(p => p.CategoryId == c.Id)
+                    })
+                    .ToListAsync();
+
+                var brands = await db.Products
+                    .AsNoTracking()
+                    .Select(p => p.Brand)
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToListAsync();
+
+                var columns = await db.GridColumns
+                    .AsNoTracking()
+                    .OrderBy(x => x.Position)
+                    .ThenBy(x => x.Id)
+                    .ToListAsync();
+
+                var banners = await db.Banners
+                    .AsNoTracking()
+                    .Where(x => x.IsActive)
+                    .OrderBy(x => x.Position)
+                    .ThenBy(x => x.Id)
+                    .ToListAsync();
+
+                return new { categories, brands, columns, banners };
             }
         );
+
         api.MapGet(
             "/products",
             async (
@@ -40,51 +58,87 @@ public static class CatalogEndpoints
                 string? stock,
                 string? sort,
                 int? page,
-                Database database
+                BusinessDbContext db
             ) =>
             {
-                using var db = database.Open();
                 var pageNumber = Math.Clamp(page ?? 1, 1, 100000);
-                var order = sort switch
-                {
-                    "price-asc" => "p.Price ASC,p.Id",
-                    "price-desc" => "p.Price DESC,p.Id",
-                    "name" => "p.Name,p.Id",
-                    "newest" => "p.CreatedAt DESC,p.Id DESC",
-                    _ => "p.Id",
-                };
-                const string where = """
-                    FROM Products p JOIN Categories c ON c.Id=p.CategoryId WHERE
-                    (@q='' OR p.Name LIKE @search ESCAPE '~' OR p.Code LIKE @search ESCAPE '~' OR p.Description LIKE @search ESCAPE '~'
-                     OR p.Brand LIKE @search ESCAPE '~' OR p.ManufacturerCode LIKE @search ESCAPE '~' OR p.SpecialCode1 LIKE @search ESCAPE '~'
-                     OR p.SpecialCode2 LIKE @search ESCAPE '~' OR p.ImageUrl LIKE @search ESCAPE '~' OR c.Name LIKE @search ESCAPE '~')
-                    AND (@category IS NULL OR p.CategoryId=@category) AND (@brand='' OR p.Brand=@brand)
-                    AND (@stock='' OR (@stock='available' AND p.Stock>0) OR (@stock='critical' AND p.Stock>0 AND p.Stock<=p.CriticalStock) OR (@stock='empty' AND p.Stock=0))
-                    """;
                 q = (q ?? "").Trim();
                 if (q.Length > 200)
                     throw new BusinessException("Arama metni en fazla 200 karakter olabilir.");
-                var args = new
+
+                var query =
+                    from p in db.Products.AsNoTracking()
+                    join c in db.Categories.AsNoTracking() on p.CategoryId equals c.Id
+                    select new { Product = p, Category = c.Name };
+
+                if (q.Length > 0)
                 {
-                    q,
-                    search = "%"
+                    var search = "%"
                         + q.Replace("~", "~~")
                             .Replace("%", "~%")
                             .Replace("_", "~_")
                             .Replace("[", "~[")
-                        + "%",
-                    category,
-                    brand = brand ?? "",
-                    stock = stock ?? "",
-                    offset = (pageNumber - 1) * 20,
+                        + "%";
+
+                    query = query.Where(x =>
+                        EF.Functions.Like(x.Product.Name, search, "~")
+                        || EF.Functions.Like(x.Product.Code, search, "~")
+                        || EF.Functions.Like(x.Product.Description, search, "~")
+                        || EF.Functions.Like(x.Product.Brand, search, "~")
+                        || EF.Functions.Like(x.Product.ManufacturerCode, search, "~")
+                        || EF.Functions.Like(x.Product.SpecialCode1, search, "~")
+                        || EF.Functions.Like(x.Product.SpecialCode2, search, "~")
+                        || EF.Functions.Like(x.Product.ImageUrl, search, "~")
+                        || EF.Functions.Like(x.Category, search, "~"));
+                }
+
+                if (category is not null)
+                    query = query.Where(x => x.Product.CategoryId == category);
+                if (!string.IsNullOrEmpty(brand))
+                    query = query.Where(x => x.Product.Brand == brand);
+
+                query = (stock ?? "") switch
+                {
+                    "available" => query.Where(x => x.Product.Stock > 0),
+                    "critical" => query.Where(x => x.Product.Stock > 0 && x.Product.Stock <= x.Product.CriticalStock),
+                    "empty" => query.Where(x => x.Product.Stock == 0),
+                    _ => query
                 };
-                var total = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) " + where, args);
-                var items = await db.QueryAsync(
-                    "SELECT p.*,c.Name AS Category "
-                        + where
-                        + $" ORDER BY {order} OFFSET @offset ROWS FETCH NEXT 20 ROWS ONLY",
-                    args
-                );
+
+                var total = await query.CountAsync();
+                var ordered = sort switch
+                {
+                    "price-asc" => query.OrderBy(x => x.Product.Price).ThenBy(x => x.Product.Id),
+                    "price-desc" => query.OrderByDescending(x => x.Product.Price).ThenBy(x => x.Product.Id),
+                    "name" => query.OrderBy(x => x.Product.Name).ThenBy(x => x.Product.Id),
+                    "newest" => query.OrderByDescending(x => x.Product.CreatedAt).ThenByDescending(x => x.Product.Id),
+                    _ => query.OrderBy(x => x.Product.Id)
+                };
+
+                var items = await ordered
+                    .Skip((pageNumber - 1) * 20)
+                    .Take(20)
+                    .Select(x => new
+                    {
+                        x.Product.Id,
+                        x.Product.Code,
+                        x.Product.Name,
+                        x.Product.Description,
+                        x.Product.Brand,
+                        x.Product.ManufacturerCode,
+                        x.Product.SpecialCode1,
+                        x.Product.SpecialCode2,
+                        x.Product.ImageUrl,
+                        x.Product.Stock,
+                        x.Product.CriticalStock,
+                        x.Product.Price,
+                        x.Product.CategoryId,
+                        x.Product.CreatedAt,
+                        x.Product.RowVersion,
+                        x.Category
+                    })
+                    .ToListAsync();
+
                 return new
                 {
                     items,
@@ -94,15 +148,36 @@ public static class CatalogEndpoints
                 };
             }
         );
+
         api.MapGet(
             "/products/{id:int}",
-            async (int id, Database database) =>
+            async (int id, BusinessDbContext db) =>
             {
-                using var db = database.Open();
-                return await db.QuerySingleOrDefaultAsync(
-                        "SELECT p.*,c.Name AS Category FROM Products p JOIN Categories c ON c.Id=p.CategoryId WHERE p.Id=@id",
-                        new { id }
-                    ) ?? throw new BusinessException("Ürün bulunamadı.", 404);
+                var product = await (
+                    from p in db.Products.AsNoTracking()
+                    join c in db.Categories.AsNoTracking() on p.CategoryId equals c.Id
+                    where p.Id == id
+                    select new
+                    {
+                        p.Id,
+                        p.Code,
+                        p.Name,
+                        p.Description,
+                        p.Brand,
+                        p.ManufacturerCode,
+                        p.SpecialCode1,
+                        p.SpecialCode2,
+                        p.ImageUrl,
+                        p.Stock,
+                        p.CriticalStock,
+                        p.Price,
+                        p.CategoryId,
+                        p.CreatedAt,
+                        p.RowVersion,
+                        Category = c.Name
+                    }).SingleOrDefaultAsync();
+
+                return product ?? throw new BusinessException("Ürün bulunamadı.", 404);
             }
         );
     }
