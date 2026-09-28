@@ -1,5 +1,5 @@
-using Dapper;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -11,34 +11,48 @@ public static partial class AdminEndpoints
     {
         api.MapGet(
             "/users",
-            async (string? q, int? page, Database database) =>
+            async (string? q, int? page, BusinessDbContext db) =>
             {
-                using var db = database.Open();
-                var args = new
-                {
-                    search = "%" + (q ?? "") + "%",
-                    offset = (Math.Clamp(page ?? 1, 1, 100000) - 1) * 20,
-                };
-                const string where =
-                    " FROM Users WHERE FirstName LIKE @search OR LastName LIKE @search OR Email LIKE @search OR Company LIKE @search";
+                var search = q ?? "";
+                var offset = (Math.Clamp(page ?? 1, 1, 100000) - 1) * 20;
+                var query = db.Users
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.FirstName.Contains(search)
+                        || x.LastName.Contains(search)
+                        || x.Email.Contains(search)
+                        || x.Company.Contains(search));
+
                 return new
                 {
-                    items = await db.QueryAsync(
-                        "SELECT Id,FirstName,LastName,Email,Phone,Company,Role,IsActive,AuthVersion AS Version"
-                            + where
-                            + " ORDER BY Id DESC OFFSET @offset ROWS FETCH NEXT 20 ROWS ONLY",
-                        args
-                    ),
-                    total = await db.ExecuteScalarAsync<int>("SELECT COUNT(*)" + where, args),
+                    items = await query
+                        .OrderByDescending(x => x.Id)
+                        .Skip(offset)
+                        .Take(20)
+                        .Select(x => new
+                        {
+                            x.Id,
+                            x.FirstName,
+                            x.LastName,
+                            x.Email,
+                            x.Phone,
+                            x.Company,
+                            x.Role,
+                            x.IsActive,
+                            Version = x.AuthVersion
+                        })
+                        .ToListAsync(),
+                    total = await query.CountAsync(),
                 };
             }
         );
+
         api.MapPut(
             "/users/{id:int}",
             async (
                 int id,
                 UserInput input,
-                Database database,
+                BusinessDbContext db,
                 IPasswordHasher<User> hasher,
                 HttpContext c
             ) =>
@@ -47,16 +61,15 @@ public static partial class AdminEndpoints
                     throw new BusinessException("Kullanıcı bilgileri gerekli.");
                 input.Company ??= "";
                 Rules.Validate(input);
-                using var db = database.Open();
-                var u =
-                    await db.QuerySingleOrDefaultAsync<User>(
-                        "SELECT * FROM Users WHERE Id=@id",
-                        new { id }
-                    ) ?? throw new BusinessException("Kullanıcı bulunamadı.", 404);
+
+                var u = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id)
+                    ?? throw new BusinessException("Kullanıcı bulunamadı.", 404);
+
                 if (input.Version <= 0)
                     throw new BusinessException("Kullanıcı sürümü gerekli.");
                 if (u.Role == "Admin" && !input.IsActive)
                     throw new BusinessException("Yönetici hesabı bu ekrandan pasifleştirilemez.");
+
                 string? passwordHash = null;
                 if (!string.IsNullOrEmpty(input.NewPassword))
                 {
@@ -64,36 +77,53 @@ public static partial class AdminEndpoints
                         throw new BusinessException("Yeni şifre 10–128 karakter olmalı.");
                     passwordHash = hasher.HashPassword(u, input.NewPassword);
                 }
-                var args = new
+
+                var firstName = input.FirstName;
+                var lastName = input.LastName;
+                var email = input.Email.Trim().ToLowerInvariant();
+                var phone = input.Phone;
+                var company = input.Company;
+                var isActive = input.IsActive;
+                var version = input.Version;
+                var target = db.Users.Where(x => x.Id == id && x.AuthVersion == version);
+
+                int updated;
+                if (passwordHash is null)
                 {
-                    id,
-                    input.FirstName,
-                    input.LastName,
-                    Email = input.Email.Trim().ToLowerInvariant(),
-                    input.Phone,
-                    input.Company,
-                    input.IsActive,
-                    input.Version,
-                    passwordHash,
-                };
-                var sql = passwordHash is null
-                    ? "UPDATE Users SET FirstName=@FirstName,LastName=@LastName,Email=@Email,Phone=@Phone,Company=@Company,IsActive=@IsActive,AuthVersion=AuthVersion+1 WHERE Id=@id AND AuthVersion=@Version"
-                    : "UPDATE Users SET FirstName=@FirstName,LastName=@LastName,Email=@Email,Phone=@Phone,Company=@Company,IsActive=@IsActive,PasswordHash=@passwordHash,AuthVersion=AuthVersion+1 WHERE Id=@id AND AuthVersion=@Version";
-                if (await db.ExecuteAsync(sql, args) == 0)
+                    updated = await target.ExecuteUpdateAsync(setters => setters
+                        .SetProperty(x => x.FirstName, firstName)
+                        .SetProperty(x => x.LastName, lastName)
+                        .SetProperty(x => x.Email, email)
+                        .SetProperty(x => x.Phone, phone)
+                        .SetProperty(x => x.Company, company)
+                        .SetProperty(x => x.IsActive, isActive)
+                        .SetProperty(x => x.AuthVersion, x => x.AuthVersion + 1));
+                }
+                else
                 {
-                    if (
-                        await db.ExecuteScalarAsync<int>(
-                            "SELECT COUNT(*) FROM Users WHERE Id=@id",
-                            new { id }
-                        ) == 0
-                    )
+                    updated = await target.ExecuteUpdateAsync(setters => setters
+                        .SetProperty(x => x.FirstName, firstName)
+                        .SetProperty(x => x.LastName, lastName)
+                        .SetProperty(x => x.Email, email)
+                        .SetProperty(x => x.Phone, phone)
+                        .SetProperty(x => x.Company, company)
+                        .SetProperty(x => x.IsActive, isActive)
+                        .SetProperty(x => x.PasswordHash, passwordHash)
+                        .SetProperty(x => x.AuthVersion, x => x.AuthVersion + 1));
+                }
+
+                if (updated == 0)
+                {
+                    if (!await db.Users.AsNoTracking().AnyAsync(x => x.Id == id))
                         throw new BusinessException("Kullanıcı bulunamadı.", 404);
+
                     throw new BusinessException(
                         "Kullanıcı başka bir işlemde değişti. Güncel bilgileri yeniden yükleyip tekrar deneyin.",
                         409,
                         "USER_CHANGED"
                     );
                 }
+
                 return Results.Ok();
             }
         );
