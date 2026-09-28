@@ -22,8 +22,16 @@ jobs:
       - name: Restore solution
         run: dotnet restore U1.Business.sln
 
-      - name: Build solution
-        run: dotnet build U1.Business.sln --no-restore --configuration Release -warnaserror
+      - name: Build application with warnings as errors
+        run: dotnet build src/U1.Business/U1.Business.csproj --no-restore --configuration Release -warnaserror
+
+      - name: Build test projects
+        shell: pwsh
+        run: |
+          dotnet build tests/U1.Business.Tests/U1.Business.Tests.csproj --no-restore --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "API test project build failed." }
+          dotnet build tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-restore --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "Browser test project build failed." }
 
       - name: Check JavaScript syntax
         shell: pwsh
