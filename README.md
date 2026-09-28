@@ -4,6 +4,33 @@ U1 Business, bayi ve yöneticilerin kullandığı küçük bir B2B e-ticaret uyg
 
 Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL Server LocalDB kullanır. Demo ürünler, fiyatlar, kullanıcılar ve firma metinleri gerçek ticari veri değildir. Uygulama ödeme veya cari hesap sistemi değildir.
 
+## Arayüzden görüntüler
+
+Aşağıdaki ekranlar çalışan uygulamadan, yalnız örnek bayi ve ürün verileriyle alınmıştır (28 Eylül 2026).
+
+### Bayi kataloğu
+
+Kategori ve stok filtreleri, ürün arama, fiyatlar ve satırdan sepete ekleme.
+
+![Bayi ana sayfasında ürün kataloğu, filtreler ve stok bilgileri](assets/screenshots/bayi-katalog.png)
+
+<details>
+<summary>Sepet ve yönetim panelini göster</summary>
+
+### Sepet ve sipariş özeti
+
+![Bayi sepetinde ürün, adet, sipariş notu ve toplam tutar](assets/screenshots/bayi-sepet.png)
+
+### Yönetim paneli
+
+![Yönetim panelinde ürün ve bayi sayıları ile kritik stok listesi](assets/screenshots/yonetim-paneli.png)
+
+</details>
+
+## Geliştirme planı
+
+Öncelikler, açık bulgular, kabul ölçütleri ve tamamlanma kayıtları [ROADMAP.md](ROADMAP.md) dosyasında tutulur. Katkı kuralları [AGENTS.md](AGENTS.md) içindedir.
+
 ## Kullanılan teknolojiler ve kısa mimari özeti
 
 | Teknoloji | Kullanımı |
@@ -20,6 +47,9 @@ Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL 
 ```text
 U1-Business/
   README.md                  Bu kurulum ve kullanım kılavuzu
+  ROADMAP.md                 Öncelikler, kabul ölçütleri ve tamamlanma takibi
+  AGENTS.md                  Yol haritası ve katkı kuralları
+  assets/screenshots/        README için demo arayüz görselleri
   U1.Business.sln            Visual Studio çözümü
   global.json                .NET SDK sürüm politikası
   src/U1.Business/
@@ -162,7 +192,8 @@ Uygulama varsayılan olarak yerel geliştirme ortamına göre yapılandırılmı
 
 ```powershell
 dotnet restore U1.Business.sln
-dotnet build U1.Business.sln --no-restore -warnaserror
+dotnet build src/U1.Business/U1.Business.csproj --no-restore --configuration Release -warnaserror
+dotnet build U1.Business.sln --no-restore --configuration Release
 ```
 
 API kabul testleri `tests/U1.Business.Tests` xUnit projesindedir. Testler her süreçte benzersiz bir `U1Business_CI_*` LocalDB veritabanı kullanır; varsayılan `U1Business` veritabanına dokunmaz. Eski Python smoke paketi kaldırılmıştır; API davranışı için tek doğruluk kaynağı xUnit testleridir.
@@ -170,10 +201,13 @@ API kabul testleri `tests/U1.Business.Tests` xUnit projesindedir. Testler her s�
 Yerel doğrulama:
 
 ```powershell
-dotnet build U1.Business.sln --configuration Release -warnaserror
+dotnet build U1.Business.sln --configuration Release
 dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-build --configuration Release
+pwsh -File tests/U1.Business.BrowserTests/bin/Release/net10.0/playwright.ps1 install chromium
 dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release
 ```
+
+Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama derlemesinde uyarıları hata sayar; test projelerindeki mevcut analizör uyarıları ayrıca [yol haritasında](ROADMAP.md) takip edilir. Testler benzersiz veritabanları oluşturur; otomatik veritabanı temizliği henüz eklenmemiştir.
 
 GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test projelerinin Release derlemesi, JavaScript sözdizimi kontrolü, benzersiz LocalDB üzerinde API integration testleri ve Playwright Chromium ile tarayıcı davranış testlerini çalıştırır.
 
