@@ -1,4 +1,4 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -10,48 +10,57 @@ public static partial class AdminEndpoints
     {
         api.MapGet(
             "/banners",
-            async (Database database) =>
-            {
-                using var db = database.Open();
-                return await db.QueryAsync("SELECT * FROM Banners ORDER BY Position,Id");
-            }
+            async (BusinessDbContext db) =>
+                await db.Banners
+                    .AsNoTracking()
+                    .OrderBy(x => x.Position)
+                    .ThenBy(x => x.Id)
+                    .ToListAsync()
         );
+
         api.MapPost(
             "/banners",
-            async (BannerInput input, Database database) =>
+            async (BannerInput input, BusinessDbContext db) =>
             {
                 if (input is null)
                     throw new BusinessException("Duyuru bilgileri gerekli.");
                 input.SearchTerm ??= "";
                 Rules.Validate(input);
-                using var db = database.Open();
-                return new
+
+                var banner = new Banner
                 {
-                    id = await db.ExecuteScalarAsync<int>(
-                        "INSERT INTO Banners(Title,Subtitle,ButtonText,SearchTerm,IsActive,Position) OUTPUT INSERTED.Id VALUES(@Title,@Subtitle,@ButtonText,@SearchTerm,@IsActive,@Position)",
-                        input
-                    ),
+                    Title = input.Title,
+                    Subtitle = input.Subtitle,
+                    ButtonText = input.ButtonText,
+                    SearchTerm = input.SearchTerm,
+                    IsActive = input.IsActive,
+                    Position = input.Position
                 };
+                db.Banners.Add(banner);
+                await db.SaveChangesAsync();
+                return new { id = banner.Id };
             }
         );
+
         api.MapPut(
             "/banners/{id:int}",
-            async (int id, BannerInput input, Database database) =>
+            async (int id, BannerInput input, BusinessDbContext db) =>
             {
                 if (input is null)
                     throw new BusinessException("Duyuru bilgileri gerekli.");
                 input.SearchTerm ??= "";
                 Rules.Validate(input);
-                using var db = database.Open();
-                var args = new DynamicParameters(input);
-                args.Add("Id", id);
-                if (
-                    await db.ExecuteAsync(
-                        "UPDATE Banners SET Title=@Title,Subtitle=@Subtitle,ButtonText=@ButtonText,SearchTerm=@SearchTerm,IsActive=@IsActive,Position=@Position WHERE Id=@Id",
-                        args
-                    ) == 0
-                )
-                    throw new BusinessException("Duyuru bulunamadı.", 404);
+
+                var banner = await db.Banners.SingleOrDefaultAsync(x => x.Id == id)
+                    ?? throw new BusinessException("Duyuru bulunamadı.", 404);
+
+                banner.Title = input.Title;
+                banner.Subtitle = input.Subtitle;
+                banner.ButtonText = input.ButtonText;
+                banner.SearchTerm = input.SearchTerm;
+                banner.IsActive = input.IsActive;
+                banner.Position = input.Position;
+                await db.SaveChangesAsync();
                 return Results.Ok();
             }
         );
