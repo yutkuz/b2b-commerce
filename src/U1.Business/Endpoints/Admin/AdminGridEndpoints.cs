@@ -1,4 +1,4 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -10,17 +10,17 @@ public static partial class AdminEndpoints
     {
         api.MapGet(
             "/grid",
-            async (Database database) =>
-            {
-                using var db = database.Open();
-                return await db.QueryAsync<GridColumn>(
-                    "SELECT * FROM GridColumns ORDER BY Position,Id"
-                );
-            }
+            async (BusinessDbContext db) =>
+                await db.GridColumns
+                    .AsNoTracking()
+                    .OrderBy(x => x.Position)
+                    .ThenBy(x => x.Id)
+                    .ToListAsync()
         );
+
         api.MapPut(
             "/grid",
-            async (GridColumn[] columns, Database database) =>
+            async (GridColumn[] columns, BusinessDbContext db) =>
             {
                 if (
                     columns is null
@@ -29,14 +29,12 @@ public static partial class AdminEndpoints
                     || columns.Select(c => c.Id).Distinct().Count() != columns.Length
                 )
                     throw new BusinessException("Kolon yapılandırması geçersiz.");
-                using var db = database.Open();
-                await db.OpenAsync();
-                using var tx = db.BeginTransaction();
-                var saved = (
-                    await db.QueryAsync<GridColumn>("SELECT * FROM GridColumns", transaction: tx)
-                ).ToList();
+
+                await using var tx = await db.Database.BeginTransactionAsync();
+                var saved = await db.GridColumns.ToListAsync();
                 if (saved.Count != columns.Length)
                     throw new BusinessException("Tüm kolonları kaydedin.");
+
                 foreach (var col in columns)
                 {
                     Rules.Validate(col);
@@ -47,6 +45,7 @@ public static partial class AdminEndpoints
                         || col.Align is not ("left" or "center" or "right")
                     )
                         throw new BusinessException("Kolon bilgileri geçersiz.");
+
                     var types = col.Field switch
                     {
                         "imageUrl" => new[] { "image", "text" },
@@ -58,6 +57,7 @@ public static partial class AdminEndpoints
                     };
                     if (!types.Contains(col.RenderType))
                         throw new BusinessException("Bu alan için render tipi geçersiz.");
+
                     if (
                         col.Field is "name" or "price" or "quantity"
                         && !(col.Desktop && col.Tablet && col.Mobile)
@@ -65,13 +65,19 @@ public static partial class AdminEndpoints
                         throw new BusinessException(
                             "Ürün adı, fiyat ve satın alma kolonları tüm cihazlarda açık kalmalıdır."
                         );
-                    await db.ExecuteAsync(
-                        "UPDATE GridColumns SET Label=@Label,RenderType=@RenderType,Position=@Position,Width=@Width,Align=@Align,Desktop=@Desktop,Tablet=@Tablet,Mobile=@Mobile WHERE Id=@Id",
-                        col,
-                        tx
-                    );
+
+                    original.Label = col.Label;
+                    original.RenderType = col.RenderType;
+                    original.Position = col.Position;
+                    original.Width = col.Width;
+                    original.Align = col.Align;
+                    original.Desktop = col.Desktop;
+                    original.Tablet = col.Tablet;
+                    original.Mobile = col.Mobile;
                 }
-                tx.Commit();
+
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
                 return Results.Ok();
             }
         );
