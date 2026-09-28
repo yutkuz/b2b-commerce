@@ -62,7 +62,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
             Page.GetByRole(AriaRole.Heading, new() { Name = "Siparişlerim" }))
             .ToBeVisibleAsync();
 
-        await Expect(Page.Locator("tbody")).ToContainTextAsync("U1-");
+        await Expect(Page.Locator("#page .data-table tbody")).ToContainTextAsync("U1-");
     }
 }
 
