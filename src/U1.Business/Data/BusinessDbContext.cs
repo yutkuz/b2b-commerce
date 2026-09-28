@@ -17,6 +17,8 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<SchemaVersion> SchemaVersions => Set<SchemaVersion>();
     public DbSet<DemoSetup> DemoSetup => Set<DemoSetup>();
 
+    // Data/*.sql and SchemaVersions are the authoritative schema-migration mechanism.
+    // EF Core owns runtime mapping/querying; keep this model aligned with the SQL schema.
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(entity =>
@@ -30,6 +32,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Company).HasMaxLength(180);
             entity.Property(x => x.PasswordHash).HasMaxLength(500);
             entity.Property(x => x.Role).HasMaxLength(12).IsUnicode(false);
+            entity.HasIndex(x => x.Email).IsUnique();
         });
 
         modelBuilder.Entity<Category>(entity =>
@@ -37,6 +40,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.ToTable("Categories");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(80);
+            entity.HasIndex(x => x.Name).IsUnique();
         });
 
         modelBuilder.Entity<Product>(entity =>
@@ -54,18 +58,25 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Price).HasPrecision(18, 2);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
             entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.HasIndex(x => x.Code).IsUnique();
+            entity.HasIndex(x => new { x.CategoryId, x.Brand });
+            entity.HasOne<Category>().WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<Cart>(entity =>
         {
             entity.ToTable("Carts");
             entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.UserId).IsUnique();
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<CartItem>(entity =>
         {
             entity.ToTable("CartItems");
             entity.HasKey(x => new { x.CartId, x.ProductId });
+            entity.HasOne<Cart>().WithMany().HasForeignKey(x => x.CartId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<Order>(entity =>
@@ -77,6 +88,10 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Total).HasPrecision(18, 2);
             entity.Property(x => x.Note).HasMaxLength(1000);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
+            entity.HasIndex(x => x.Number).IsUnique();
+            entity.HasIndex(x => x.RequestId).IsUnique();
+            entity.HasIndex(x => new { x.UserId, x.CreatedAt });
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<OrderItem>(entity =>
@@ -87,6 +102,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.ProductName).HasMaxLength(180);
             entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
             entity.Property(x => x.Total).HasPrecision(18, 2);
+            entity.HasIndex(x => x.OrderId);
+            entity.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<GridColumn>(entity =>
@@ -97,6 +115,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Label).HasMaxLength(60);
             entity.Property(x => x.RenderType).HasMaxLength(20).IsUnicode(false);
             entity.Property(x => x.Align).HasMaxLength(10).IsUnicode(false);
+            entity.HasIndex(x => x.Field).IsUnique();
         });
 
         modelBuilder.Entity<Banner>(entity =>
