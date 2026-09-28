@@ -27,10 +27,6 @@ Kategori ve stok filtreleri, ürün arama, fiyatlar ve satırdan sepete ekleme.
 
 </details>
 
-## Geliştirme planı
-
-Öncelikler, açık bulgular, kabul ölçütleri ve tamamlanma kayıtları [ROADMAP.md](ROADMAP.md) dosyasında tutulur. Katkı kuralları [AGENTS.md](AGENTS.md) içindedir.
-
 ## Kullanılan teknolojiler ve kısa mimari özeti
 
 | Teknoloji | Kullanımı |
@@ -47,8 +43,6 @@ Kategori ve stok filtreleri, ürün arama, fiyatlar ve satırdan sepete ekleme.
 ```text
 U1-Business/
   README.md                  Bu kurulum ve kullanım kılavuzu
-  ROADMAP.md                 Öncelikler, kabul ölçütleri ve tamamlanma takibi
-  AGENTS.md                  Yol haritası ve katkı kuralları
   assets/screenshots/        README için demo arayüz görselleri
   U1.Business.sln            Visual Studio çözümü
   global.json                .NET SDK sürüm politikası
@@ -207,7 +201,7 @@ pwsh -File tests/U1.Business.BrowserTests/bin/Release/net10.0/playwright.ps1 ins
 dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release
 ```
 
-Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama derlemesinde uyarıları hata sayar; test projelerindeki mevcut analizör uyarıları ayrıca [yol haritasında](ROADMAP.md) takip edilir. Testler benzersiz veritabanları oluşturur; otomatik veritabanı temizliği henüz eklenmemiştir.
+Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama derlemesinde uyarıları hata sayar. Testler benzersiz veritabanları oluşturur; otomatik veritabanı temizliği henüz eklenmemiştir.
 
 GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test projelerinin Release derlemesi, JavaScript sözdizimi kontrolü, benzersiz LocalDB üzerinde API integration testleri ve Playwright Chromium ile tarayıcı davranış testlerini çalıştırır.
 
