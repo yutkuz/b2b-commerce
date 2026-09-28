@@ -28,8 +28,10 @@ U1-Business/
     Domain/                  Veri modelleri ve giriş doğrulama
     Data/                    SQL şeması, yükseltmeler, örnek veriler
     Services/                Sipariş ve stok işlemleri
-    Endpoints/               HTTP API yolları
+    Endpoints/               Kimlik, katalog, sepet ve sipariş API yolları
+      Admin/                 Yönetim API yolları: ürün, kullanıcı, sipariş, grid, duyuru
     wwwroot/                 Canlı arayüz, stiller, yerel ürün görselleri
+      admin/                 Yönetim ekranları ve form işlemleri
 ```
 
 `src/U1.Business/wwwroot/index.html` doğrudan dosya olarak açılmaz. Uygulamayı sunucudan `http://localhost:5080` adresiyle kullanın. Veritabanı depoya dahil değildir; ilk açılışta SQL Server'da oluşturulur.

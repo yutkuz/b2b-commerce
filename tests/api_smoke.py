@@ -188,6 +188,37 @@ def run(base, database):
         "GET", f"/api/orders/{order['id']}", expected=404
     ))
 
+    check("admin grid update", lambda: admin.request(
+        "PUT", "/api/admin/grid", admin.request("GET", "/api/admin/grid")
+    ))
+    banner = {
+        "title": "QA duyuru", "subtitle": "İlk metin", "buttonText": "Ürünleri aç",
+        "searchTerm": "QA", "isActive": True, "position": 3,
+    }
+    banner_id = admin.request("POST", "/api/admin/banners", banner)["id"]
+    admin.request("PUT", f"/api/admin/banners/{banner_id}",
+                  {**banner, "subtitle": "Güncel metin"})
+    check("admin banner update", lambda: assert_true(any(
+        item["id"] == banner_id and item["subtitle"] == "Güncel metin"
+        for item in admin.request("GET", "/api/admin/banners")
+    )))
+    managed_user = admin.request(
+        "GET", "/api/admin/users?q=" + registration["email"]
+    )["items"][0]
+    admin.request("PUT", f"/api/admin/users/{managed_user['id']}", {
+        "firstName": managed_user["firstName"],
+        "lastName": managed_user["lastName"],
+        "email": managed_user["email"],
+        "phone": managed_user["phone"],
+        "company": managed_user["company"],
+        "isActive": True,
+        "newPassword": "",
+        "version": managed_user["version"],
+    })
+    check("admin user update invalidates old session", lambda: buyer.request(
+        "GET", "/api/auth/me", expected=401
+    ))
+
 
 def assert_equal(actual, expected):
     assert actual == expected, (actual, expected)

@@ -22,7 +22,7 @@ jobs:
       - name: Check JavaScript syntax
         shell: pwsh
         run: |
-          $files = Get-ChildItem src/U1.Business/wwwroot -Filter *.js
+          $files = Get-ChildItem src/U1.Business/wwwroot -Filter *.js -Recurse
           foreach ($file in $files) {
             node --check $file.FullName
             if ($LASTEXITCODE -ne 0) {
