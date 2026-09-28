@@ -1,5 +1,5 @@
 using System.Data;
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 using U1.Business.Services;
@@ -11,88 +11,127 @@ public static class CommerceEndpoints
     public static void MapCommerce(this WebApplication app)
     {
         var api = app.MapGroup("/api").RequireAuthorization();
+
         api.MapGet(
             "/cart",
-            async (Database database, HttpContext c) =>
+            async (BusinessDbContext db, HttpContext c) =>
             {
-                using var db = database.Open();
-                var items = (
-                    await db.QueryAsync(
-                        "SELECT p.Id,p.Code,p.Name,p.ImageUrl,p.Price,p.Stock,ci.Quantity,p.Price*ci.Quantity AS Total FROM Carts ca JOIN CartItems ci ON ca.Id=ci.CartId JOIN Products p ON p.Id=ci.ProductId WHERE ca.UserId=@id ORDER BY p.Id",
-                        new { id = c.UserId() }
-                    )
-                ).ToList();
+                var id = c.UserId();
+                var items = await (
+                    from ca in db.Carts.AsNoTracking()
+                    join ci in db.CartItems.AsNoTracking() on ca.Id equals ci.CartId
+                    join p in db.Products.AsNoTracking() on ci.ProductId equals p.Id
+                    where ca.UserId == id
+                    orderby p.Id
+                    select new
+                    {
+                        p.Id,
+                        p.Code,
+                        p.Name,
+                        p.ImageUrl,
+                        p.Price,
+                        p.Stock,
+                        ci.Quantity,
+                        Total = p.Price * ci.Quantity
+                    }).ToListAsync();
+
                 return new
                 {
                     items,
-                    total = items.Sum(i => (decimal)i.Total),
-                    count = items.Sum(i => (int)i.Quantity),
+                    total = items.Sum(i => i.Total),
+                    count = items.Sum(i => i.Quantity),
                 };
             }
         );
+
         api.MapPost(
             "/cart",
-            async (CartInput? input, Database database, HttpContext c) =>
-                await SetCart(input, true, database, c)
+            async (CartInput? input, BusinessDbContext db, HttpContext c) =>
+                await SetCart(input, true, db, c)
         );
+
         api.MapPut(
             "/cart",
-            async (CartInput? input, Database database, HttpContext c) =>
-                await SetCart(input, false, database, c)
+            async (CartInput? input, BusinessDbContext db, HttpContext c) =>
+                await SetCart(input, false, db, c)
         );
+
         api.MapDelete(
             "/cart/{productId:int}",
-            async (int productId, Database database, HttpContext c) =>
-                await SetCart(new CartInput(productId, 0), false, database, c)
+            async (int productId, BusinessDbContext db, HttpContext c) =>
+                await SetCart(new CartInput(productId, 0), false, db, c)
         );
+
         api.MapPost(
             "/orders",
             async (CheckoutInput input, OrderService orders, HttpContext c) =>
                 await orders.Checkout(c.UserId(), input)
         );
+
         api.MapGet(
             "/orders",
-            async (Database database, HttpContext c, int? page) =>
+            async (BusinessDbContext db, HttpContext c, int? page) =>
             {
-                using var db = database.Open();
                 var id = c.UserId();
                 var offset = (Math.Clamp(page ?? 1, 1, 100000) - 1) * 20;
+                var query = db.Orders.AsNoTracking().Where(x => x.UserId == id);
+
                 return new
                 {
-                    items = await db.QueryAsync(
-                        "SELECT Id,Number,CreatedAt,Status,Total FROM Orders WHERE UserId=@id ORDER BY Id DESC OFFSET @offset ROWS FETCH NEXT 20 ROWS ONLY",
-                        new { id, offset }
-                    ),
-                    total = await db.ExecuteScalarAsync<int>(
-                        "SELECT COUNT(*) FROM Orders WHERE UserId=@id",
-                        new { id }
-                    ),
+                    items = await query
+                        .OrderByDescending(x => x.Id)
+                        .Skip(offset)
+                        .Take(20)
+                        .Select(x => new { x.Id, x.Number, x.CreatedAt, x.Status, x.Total })
+                        .ToListAsync(),
+                    total = await query.CountAsync(),
                 };
             }
         );
+
         api.MapGet(
             "/orders/{id:int}",
-            async (int id, Database database, HttpContext c) =>
+            async (int id, BusinessDbContext db, HttpContext c) =>
             {
-                using var db = database.Open();
-                var order =
-                    await db.QuerySingleOrDefaultAsync(
-                        "SELECT o.*,u.FirstName,u.LastName,u.Company FROM Orders o JOIN Users u ON u.Id=o.UserId WHERE o.Id=@id AND (o.UserId=@userId OR @admin=1)",
-                        new
-                        {
-                            id,
-                            userId = c.UserId(),
-                            admin = c.User.IsInRole("Admin"),
-                        }
-                    ) ?? throw new BusinessException("Sipariş bulunamadı.", 404);
-                return new
-                {
-                    order,
-                    items = await db.QueryAsync(
-                        "SELECT ProductId,ProductCode,ProductName,Quantity,UnitPrice,Total FROM OrderItems WHERE OrderId=@id ORDER BY Id",
-                        new { id }
-                    ),
-                };
+                var userId = c.UserId();
+                var admin = c.User.IsInRole("Admin");
+
+                var order = await (
+                    from o in db.Orders.AsNoTracking()
+                    join u in db.Users.AsNoTracking() on o.UserId equals u.Id
+                    where o.Id == id && (o.UserId == userId || admin)
+                    select new
+                    {
+                        o.Id,
+                        o.Number,
+                        o.UserId,
+                        o.CreatedAt,
+                        o.Status,
+                        o.Total,
+                        o.RequestId,
+                        o.Note,
+                        u.FirstName,
+                        u.LastName,
+                        u.Company
+                    }).SingleOrDefaultAsync()
+                    ?? throw new BusinessException("Sipariş bulunamadı.", 404);
+
+                var items = await db.OrderItems
+                    .AsNoTracking()
+                    .Where(x => x.OrderId == id)
+                    .OrderBy(x => x.Id)
+                    .Select(x => new
+                    {
+                        x.ProductId,
+                        x.ProductCode,
+                        x.ProductName,
+                        x.Quantity,
+                        x.UnitPrice,
+                        x.Total
+                    })
+                    .ToListAsync();
+
+                return new { order, items };
             }
         );
     }
@@ -100,7 +139,7 @@ public static class CommerceEndpoints
     private static async Task<IResult> SetCart(
         CartInput? input,
         bool add,
-        Database database,
+        BusinessDbContext db,
         HttpContext c
     )
     {
@@ -112,66 +151,60 @@ public static class CommerceEndpoints
             || (add && input.Quantity == 0)
         )
             throw new BusinessException("Geçerli bir ürün ve adet girin.");
-        using var db = database.Open();
-        await db.OpenAsync();
-        using var tx = db.BeginTransaction(IsolationLevel.Serializable);
-        var cart = await db.ExecuteScalarAsync<int>(
-            "SELECT Id FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId=@id",
-            new { id = c.UserId() },
-            tx
-        );
-        var stock =
-            await db.QuerySingleOrDefaultAsync<int?>(
-                "SELECT Stock FROM Products WHERE Id=@ProductId",
-                input,
-                tx
-            ) ?? throw new BusinessException("Ürün bulunamadı.", 404);
-        var current = await db.ExecuteScalarAsync<int>(
-            "SELECT Quantity FROM CartItems WHERE CartId=@cart AND ProductId=@ProductId",
-            new { cart, input.ProductId },
-            tx
-        );
+
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        var userId = c.UserId();
+        var cart = await db.Carts
+            .FromSqlInterpolated($"SELECT * FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId={userId}")
+            .SingleOrDefaultAsync()
+            ?? throw new BusinessException("Sepet bulunamadı.", 404);
+
+        var stock = await db.Products
+            .AsNoTracking()
+            .Where(x => x.Id == input.ProductId)
+            .Select(x => (int?)x.Stock)
+            .SingleOrDefaultAsync()
+            ?? throw new BusinessException("Ürün bulunamadı.", 404);
+
+        var cartItem = await db.CartItems.SingleOrDefaultAsync(
+            x => x.CartId == cart.Id && x.ProductId == input.ProductId);
+        var current = cartItem?.Quantity ?? 0;
         var quantity = add ? (long)current + input.Quantity : input.Quantity;
+
         if (quantity > 1000000)
             throw new BusinessException(
                 "Sepette bir ürün en fazla 1.000.000 adet olabilir.",
                 400,
                 "QUANTITY_LIMIT"
             );
+
         if (quantity > stock)
             throw new BusinessException(
                 $"Yeterli stok yok. Mevcut stok: {stock}. Sepetinizde: {current}.",
                 409
             );
+
         if (quantity == 0)
-            await db.ExecuteAsync(
-                "DELETE FROM CartItems WHERE CartId=@cart AND ProductId=@ProductId",
-                new { cart, input.ProductId },
-                tx
-            );
-        else if (current > 0)
-            await db.ExecuteAsync(
-                "UPDATE CartItems SET Quantity=@quantity WHERE CartId=@cart AND ProductId=@ProductId",
-                new
-                {
-                    cart,
-                    input.ProductId,
-                    quantity,
-                },
-                tx
-            );
+        {
+            if (cartItem is not null)
+                db.CartItems.Remove(cartItem);
+        }
+        else if (cartItem is not null)
+        {
+            cartItem.Quantity = (int)quantity;
+        }
         else
-            await db.ExecuteAsync(
-                "INSERT INTO CartItems(CartId,ProductId,Quantity) VALUES(@cart,@ProductId,@quantity)",
-                new
-                {
-                    cart,
-                    input.ProductId,
-                    quantity,
-                },
-                tx
-            );
-        tx.Commit();
+        {
+            db.CartItems.Add(new CartItem
+            {
+                CartId = cart.Id,
+                ProductId = input.ProductId,
+                Quantity = (int)quantity
+            });
+        }
+
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
         return Results.Ok();
     }
 }

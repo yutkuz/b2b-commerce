@@ -1,4 +1,4 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 using U1.Business.Services;
@@ -11,29 +11,45 @@ public static partial class AdminEndpoints
     {
         api.MapGet(
             "/orders",
-            async (string? q, string? status, int? page, Database database) =>
+            async (string? q, string? status, int? page, BusinessDbContext db) =>
             {
-                using var db = database.Open();
-                var args = new
-                {
-                    q = "%" + (q ?? "") + "%",
-                    status = status ?? "",
-                    offset = (Math.Clamp(page ?? 1, 1, 100000) - 1) * 20,
-                };
-                const string where =
-                    " FROM Orders o JOIN Users u ON u.Id=o.UserId WHERE (o.Number LIKE @q OR u.Company LIKE @q OR u.FirstName LIKE @q OR u.LastName LIKE @q) AND (@status='' OR o.Status=@status)";
+                var search = q ?? "";
+                var statusFilter = status ?? "";
+                var offset = (Math.Clamp(page ?? 1, 1, 100000) - 1) * 20;
+
+                var query =
+                    from o in db.Orders.AsNoTracking()
+                    join u in db.Users.AsNoTracking() on o.UserId equals u.Id
+                    where (
+                        o.Number.Contains(search)
+                        || u.Company.Contains(search)
+                        || u.FirstName.Contains(search)
+                        || u.LastName.Contains(search))
+                        && (statusFilter == "" || o.Status == statusFilter)
+                    select new
+                    {
+                        o.Id,
+                        o.Number,
+                        o.CreatedAt,
+                        o.Status,
+                        o.Total,
+                        u.FirstName,
+                        u.LastName,
+                        u.Company
+                    };
+
                 return new
                 {
-                    items = await db.QueryAsync(
-                        "SELECT o.Id,o.Number,o.CreatedAt,o.Status,o.Total,u.FirstName,u.LastName,u.Company"
-                            + where
-                            + " ORDER BY o.Id DESC OFFSET @offset ROWS FETCH NEXT 20 ROWS ONLY",
-                        args
-                    ),
-                    total = await db.ExecuteScalarAsync<int>("SELECT COUNT(*)" + where, args),
+                    items = await query
+                        .OrderByDescending(x => x.Id)
+                        .Skip(offset)
+                        .Take(20)
+                        .ToListAsync(),
+                    total = await query.CountAsync(),
                 };
             }
         );
+
         api.MapPut(
             "/orders/{id:int}/status",
             async (int id, StatusInput input, OrderService orders) =>

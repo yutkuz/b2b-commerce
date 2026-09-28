@@ -1,147 +1,261 @@
-using Dapper;
-using Microsoft.Data.SqlClient;
-using Microsoft.AspNetCore.Identity;
 using System.Data;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using U1.Business.Domain;
 
 namespace U1.Business.Data;
 
-public sealed class Database(IConfiguration config)
+public sealed class Database(
+    IConfiguration config,
+    IDbContextFactory<BusinessDbContext> dbFactory)
 {
-    public SqlConnection Open() => new(config.GetConnectionString("SqlServer"));
     public async Task Initialize(bool development)
     {
-        var builder = new SqlConnectionStringBuilder(config.GetConnectionString("SqlServer"));
+        var connectionString = config.GetConnectionString("SqlServer")
+            ?? throw new InvalidOperationException("SqlServer bağlantı dizesi bulunamadı.");
+        var builder = new SqlConnectionStringBuilder(connectionString);
         var name = builder.InitialCatalog;
         if (string.IsNullOrWhiteSpace(name) || name.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '_'))
             throw new InvalidOperationException("Veritabanı adı yalnızca harf, rakam ve alt çizgi içerebilir.");
+
         var expectedTestDatabase = Environment.GetEnvironmentVariable("U1_TEST_DATABASE");
         if (expectedTestDatabase is not null && (name != expectedTestDatabase || name == "U1Business"))
             throw new InvalidOperationException("Test veritabanı bağlantısı beklenen ayrı veritabanıyla eşleşmiyor.");
+
         builder.InitialCatalog = "master";
-        using (var master = new SqlConnection(builder.ConnectionString))
+        await using (var master = new SqlConnection(builder.ConnectionString))
         {
             await master.OpenAsync();
             var resource = "U1Business.Create." + name;
-            var createLock = await master.ExecuteScalarAsync<int>("EXEC sp_getapplock @Resource=@resource, @LockMode='Exclusive', @LockOwner='Session', @LockTimeout=30000",new { resource });
-            if(createLock<0) throw new InvalidOperationException("Veritabanı oluşturma kilidi alınamadı.");
-            try { await master.ExecuteAsync($"IF DB_ID(@name) IS NULL CREATE DATABASE [{name}]",new { name }); }
-            finally { await master.ExecuteAsync("EXEC sp_releaseapplock @Resource=@resource, @LockOwner='Session'",new { resource }); }
+
+            using var acquire = master.CreateCommand();
+            acquire.CommandText = "EXEC sp_getapplock @Resource=@resource, @LockMode='Exclusive', @LockOwner='Session', @LockTimeout=30000";
+            acquire.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, 255) { Value = resource });
+            var createLock = Convert.ToInt32(await acquire.ExecuteScalarAsync());
+            if (createLock < 0)
+                throw new InvalidOperationException("Veritabanı oluşturma kilidi alınamadı.");
+
+            try
+            {
+                using var create = master.CreateCommand();
+                create.CommandText = $"IF DB_ID(@name) IS NULL CREATE DATABASE [{name}]";
+                create.Parameters.Add(new SqlParameter("@name", SqlDbType.NVarChar, 128) { Value = name });
+                await create.ExecuteNonQueryAsync();
+            }
+            finally
+            {
+                using var release = master.CreateCommand();
+                release.CommandText = "EXEC sp_releaseapplock @Resource=@resource, @LockOwner='Session'";
+                release.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, 255) { Value = resource });
+                await release.ExecuteNonQueryAsync();
+            }
         }
-        using var db = Open();
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await db.Database.OpenConnectionAsync();
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         var assembly = typeof(Database).Assembly;
-        await db.OpenAsync();
-        using (var tx = db.BeginTransaction(IsolationLevel.Serializable))
+
+        var lockResult = await ExecuteScalarAsync(
+            db,
+            "EXEC sp_getapplock @Resource='U1Business.Schema', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=30000");
+        if (lockResult < 0)
+            throw new InvalidOperationException("Şema yükseltme kilidi alınamadı.");
+
+        await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.001-schema.sql"));
+        var version = await db.SchemaVersions.MaxAsync(x => (int?)x.Version) ?? 0;
+        if (version > 3)
+            throw new InvalidOperationException("Veritabanı şeması bu uygulamadan daha yeni.");
+
+        if (version < 2)
         {
-            var lockResult = await db.ExecuteScalarAsync<int>("EXEC sp_getapplock @Resource='U1Business.Schema', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=30000", transaction: tx);
-            if (lockResult < 0) throw new InvalidOperationException("Şema yükseltme kilidi alınamadı.");
-            using var stream = assembly.GetManifestResourceStream("U1.Business.Data.001-schema.sql")!;
-            using var reader = new StreamReader(stream);
-            await db.ExecuteAsync(await reader.ReadToEndAsync(), transaction: tx);
-            var version = await db.ExecuteScalarAsync<int>("SELECT MAX(Version) FROM dbo.SchemaVersions", transaction: tx);
-            if (version > 3) throw new InvalidOperationException("Veritabanı şeması bu uygulamadan daha yeni.");
-            if (version < 2)
-            {
-                using var migration = assembly.GetManifestResourceStream("U1.Business.Data.003-product-rowversion.sql")!;
-                using var migrationReader = new StreamReader(migration);
-                await db.ExecuteAsync(await migrationReader.ReadToEndAsync(), transaction: tx);
-                await db.ExecuteAsync("INSERT INTO dbo.SchemaVersions(Version) VALUES(2)", transaction: tx);
-            }
-            if (version < 3)
-            {
-                using var setupMigration = assembly.GetManifestResourceStream("U1.Business.Data.004-demo-setup.sql")!;
-                using var setupReader = new StreamReader(setupMigration);
-                await db.ExecuteAsync(await setupReader.ReadToEndAsync(), transaction: tx);
-                await db.ExecuteAsync("INSERT INTO dbo.SchemaVersions(Version) VALUES(3)", transaction: tx);
-            }
-            await InitializeDemo(db, tx, development);
-            using var visualStream = assembly.GetManifestResourceStream("U1.Business.Data.002-demo-visuals.sql")!;
-            using var visualReader = new StreamReader(visualStream);
-            await db.ExecuteAsync(await visualReader.ReadToEndAsync(), transaction: tx);
-            tx.Commit();
+            await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.003-product-rowversion.sql"));
+            db.SchemaVersions.Add(new SchemaVersion { Version = 2 });
+            await db.SaveChangesAsync();
         }
+
+        if (version < 3)
+        {
+            await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.004-demo-setup.sql"));
+            db.SchemaVersions.Add(new SchemaVersion { Version = 3 });
+            await db.SaveChangesAsync();
+        }
+
+        await InitializeDemo(db, development);
+        await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.002-demo-visuals.sql"));
+        await tx.CommitAsync();
     }
-    private static async Task InitializeDemo(SqlConnection db, SqlTransaction tx, bool development)
+
+    private static async Task<int> ExecuteScalarAsync(BusinessDbContext db, string sql)
     {
-        var catalogDone = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM DemoSetup WHERE Component='catalog'", transaction: tx) != 0;
+        var connection = (SqlConnection)db.Database.GetDbConnection();
+        using var command = connection.CreateCommand();
+        command.Transaction = (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction();
+        command.CommandText = sql;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<string> ReadResource(System.Reflection.Assembly assembly, string name)
+    {
+        await using var stream = assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException($"Kaynak bulunamadı: {name}");
+        using var reader = new StreamReader(stream);
+        return await reader.ReadToEndAsync();
+    }
+
+    private static async Task InitializeDemo(BusinessDbContext db, bool development)
+    {
+        var catalogDone = await db.DemoSetup.AsNoTracking().AnyAsync(x => x.Component == "catalog");
         if (!catalogDone)
         {
-            var categoryCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Categories", transaction: tx);
-            var productCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Products", transaction: tx);
-            var columnCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM GridColumns", transaction: tx);
-            var bannerCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Banners", transaction: tx);
+            var categoryCount = await db.Categories.CountAsync();
+            var productCount = await db.Products.CountAsync();
+            var columnCount = await db.GridColumns.CountAsync();
+            var bannerCount = await db.Banners.CountAsync();
             var empty = categoryCount == 0 && productCount == 0 && columnCount == 0 && bannerCount == 0;
-            if (empty) await Seed(db, tx);
+
+            if (empty)
+            {
+                await Seed(db);
+            }
             else
             {
                 var demoCategories = new[] { "Diagnostik cihazlar", "Elektronik parçalar", "Servis ekipmanları", "Bağlantı & kablolar" };
                 var demoCodes = new[] { "DG-001", "DG-002", "EL-101", "EL-102", "SR-201", "KB-301", "SR-202", "EL-103", "KB-302", "SR-203", "EL-104", "DG-003" };
-                var onlyDemoCategories = categoryCount <= demoCategories.Length &&
-                    await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Categories WHERE Name NOT IN @names", new { names=demoCategories }, tx) == 0;
-                var onlyDemoProducts = productCount <= demoCodes.Length &&
-                    await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Products WHERE Code NOT IN @codes", new { codes=demoCodes }, tx) == 0;
+                var onlyDemoCategories = categoryCount <= demoCategories.Length
+                    && !await db.Categories.AnyAsync(x => !demoCategories.Contains(x.Name));
+                var onlyDemoProducts = productCount <= demoCodes.Length
+                    && !await db.Products.AnyAsync(x => !demoCodes.Contains(x.Code));
+
                 if (onlyDemoCategories && onlyDemoProducts && (categoryCount < 4 || productCount < 12 || columnCount == 0))
                     throw new InvalidOperationException("Demo katalog kurulumu yarım kalmış olabilir. Mevcut verileri koruyarak kurtarma için README'deki başlangıç verisi bölümünü izleyin.");
             }
-            await db.ExecuteAsync("INSERT INTO DemoSetup(Component,Status) VALUES('catalog',@status)", new {status=empty?"seeded":"existing"}, tx);
+
+            db.DemoSetup.Add(new DemoSetup
+            {
+                Component = "catalog",
+                Status = empty ? "seeded" : "existing"
+            });
+            await db.SaveChangesAsync();
         }
-        if (!development) return;
-        var accountsDone = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM DemoSetup WHERE Component='accounts'", transaction: tx) != 0;
-        if (accountsDone) return;
-        var userCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users", transaction: tx);
+
+        if (!development)
+            return;
+
+        var accountsDone = await db.DemoSetup.AsNoTracking().AnyAsync(x => x.Component == "accounts");
+        if (accountsDone)
+            return;
+
+        var userCount = await db.Users.CountAsync();
         if (userCount == 0)
         {
-            var hash = new PasswordHasher<User>();
-            foreach (var pair in new[] { ("admin@u1.local", "Admin", "Yönetici", "U1 Business", "U1Admin!2026"), ("bayi@u1.local", "Dealer", "Ahmet", "Yılmaz Otomotiv", "U1Bayi!2026") })
+            var hasher = new PasswordHasher<User>();
+            var users = new[]
             {
-                var user = new User { Email = pair.Item1 };
-                await db.ExecuteAsync("INSERT INTO Users(FirstName,LastName,Email,Phone,Company,PasswordHash,Role) VALUES(@first,N'Yılmaz',@email,'05321234567',@company,@hash,@role); INSERT INTO Carts(UserId) VALUES(SCOPE_IDENTITY());",
-                    new { first = pair.Item3, email = pair.Item1, company = pair.Item4, hash = hash.HashPassword(user, pair.Item5), role = pair.Item2 }, tx);
-            }
+                CreateDemoUser(hasher, "admin@u1.local", "Admin", "Yönetici", "U1 Business", "U1Admin!2026"),
+                CreateDemoUser(hasher, "bayi@u1.local", "Dealer", "Ahmet", "Yılmaz Otomotiv", "U1Bayi!2026")
+            };
+
+            db.Users.AddRange(users);
+            await db.SaveChangesAsync();
+            db.Carts.AddRange(users.Select(x => new Cart { UserId = x.Id }));
+            await db.SaveChangesAsync();
         }
         else
         {
-            var demoCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE Email IN ('admin@u1.local','bayi@u1.local')", transaction: tx);
+            var demoCount = await db.Users.CountAsync(x => x.Email == "admin@u1.local" || x.Email == "bayi@u1.local");
             if (demoCount == 1)
                 throw new InvalidOperationException("Demo kullanıcı kurulumu yarım kalmış olabilir. Mevcut kullanıcıyı koruyarak kurtarma için README'deki başlangıç verisi bölümünü izleyin.");
-            await db.ExecuteAsync("INSERT INTO Carts(UserId) SELECT u.Id FROM Users u WHERE NOT EXISTS(SELECT 1 FROM Carts c WHERE c.UserId=u.Id)", transaction: tx);
+
+            var usersWithoutCart = await db.Users
+                .Where(u => !db.Carts.Any(c => c.UserId == u.Id))
+                .Select(u => u.Id)
+                .ToListAsync();
+            db.Carts.AddRange(usersWithoutCart.Select(id => new Cart { UserId = id }));
+            await db.SaveChangesAsync();
         }
-        await db.ExecuteAsync("INSERT INTO DemoSetup(Component,Status) VALUES('accounts',@status)", new {status=userCount==0?"seeded":"existing"}, tx);
+
+        db.DemoSetup.Add(new DemoSetup
+        {
+            Component = "accounts",
+            Status = userCount == 0 ? "seeded" : "existing"
+        });
+        await db.SaveChangesAsync();
     }
-    private static async Task Seed(SqlConnection db, SqlTransaction tx)
+
+    private static User CreateDemoUser(
+        PasswordHasher<User> hasher,
+        string email,
+        string role,
+        string firstName,
+        string company,
+        string password)
     {
-        await db.ExecuteAsync("INSERT INTO Categories(Name) VALUES(N'Diagnostik cihazlar'),(N'Elektronik parçalar'),(N'Servis ekipmanları'),(N'Bağlantı & kablolar');", transaction: tx);
-        var categoryIds = (await db.QueryAsync<int>("SELECT Id FROM Categories ORDER BY Id", transaction: tx)).ToArray();
-        var items = new[] {
-            new {code="DG-001",name="Profesyonel arıza tespit cihazı",brand="U1 Diagnostic",maker="PRO-X7",cat=1,price=24900m,stock=24,critical=5,desc="OBD-II uyumlu araçlarda kapsamlı arıza okuma ve canlı veri takibi. 10 inç dokunmatik ekran, kablosuz bağlantı.",img="diagnostic"},
-            new {code="DG-002",name="Kompakt OBD-II test cihazı",brand="U1 Diagnostic",maker="SCAN-S2",cat=1,price=3850m,stock=8,critical=10,desc="Servis ve saha kullanımı için taşınabilir hata kodu okuyucu. OBD-II protokolleriyle uyumlu.",img="diagnostic"},
-            new {code="EL-101",name="Motor kontrol ünitesi",brand="U1 Electronics",maker="ECU-240",cat=2,price=12750m,stock=16,critical=4,desc="Otomotiv motor yönetimi için elektronik kontrol modülü. Sipariş öncesinde araç uyumluluğunu kontrol edin.",img="module"},
-            new {code="EL-102",name="ABS sensörü · ön teker",brand="U1 Electronics",maker="ABS-F01",cat=2,price=680m,stock=64,critical=15,desc="Ön teker hız ölçümü için hassas ABS sensörü. Kablo ve bağlantı soketi dahildir.",img="cable"},
-            new {code="SR-201",name="Dijital akü test cihazı",brand="U1 Service",maker="BAT-600",cat=3,price=2450m,stock=3,critical=5,desc="12V aküler için şarj, marş ve sağlık kontrolü. Kolay okunur dijital ekran.",img="diagnostic"},
-            new {code="KB-301",name="OBD-II bağlantı kablosu",brand="U1 Connect",maker="OBD-16P",cat=4,price=450m,stock=120,critical=20,desc="16 pin OBD-II uzatma kablosu, 1,5 metre. Yoğun servis kullanımına uygun dayanıklı bağlantılar.",img="cable"},
-            new {code="SR-202",name="Profesyonel dijital multimetre",brand="U1 Service",maker="DMM-820",cat=3,price=1890m,stock=0,critical=5,desc="Gerilim, akım ve direnç ölçümü için otomatik aralıklı dijital multimetre.",img="diagnostic"},
-            new {code="EL-103",name="Oksijen sensörü",brand="U1 Electronics",maker="O2-4W",cat=2,price=1250m,stock=32,critical=8,desc="Dört kablolu oksijen sensörü. Yakıt kontrol sistemleri için yedek parça.",img="cable"},
-            new {code="KB-302",name="Diagnostik adaptör seti",brand="U1 Connect",maker="ADP-8",cat=4,price=3200m,stock=19,critical=5,desc="Farklı araç bağlantıları için 8 parçalı diagnostik adaptör seti.",img="cable"},
-            new {code="SR-203",name="Elektronik test probu seti",brand="U1 Service",maker="PROBE-12",cat=3,price=950m,stock=47,critical=10,desc="Hassas elektronik ölçümler için 12 parçalı test probu ve bağlantı aksesuarları.",img="cable"},
-            new {code="EL-104",name="Röle kontrol modülü",brand="U1 Electronics",maker="RLY-12V",cat=2,price=790m,stock=28,critical=6,desc="12V otomotiv devreleri için kompakt röle kontrol ünitesi.",img="module"},
-            new {code="DG-003",name="Kablosuz diagnostik arayüz",brand="U1 Diagnostic",maker="VCI-BT",cat=1,price=6900m,stock=11,critical=5,desc="Uyumlu diagnostik yazılımlarla Bluetooth üzerinden araç veri bağlantısı.",img="module"}
+        var user = new User
+        {
+            FirstName = firstName,
+            LastName = "Yılmaz",
+            Email = email,
+            Phone = "05321234567",
+            Company = company,
+            Role = role,
+            IsActive = true,
+            AuthVersion = 1
         };
-        foreach (var p in items)
-            await db.ExecuteAsync("INSERT INTO Products(Code,Name,Description,Brand,ManufacturerCode,SpecialCode1,SpecialCode2,ImageUrl,Stock,CriticalStock,Price,CategoryId) VALUES(@code,@name,@desc,@brand,@maker,@special1,'2026',@image,@stock,@critical,@price,@cat)",
-                new { p.code,p.name,p.desc,p.brand,p.maker,p.stock,p.critical,p.price,cat=categoryIds[p.cat-1], special1="AUTO-"+p.code[..2],image="/images/"+p.img+".svg" }, tx);
-        foreach (var c in new[] {
-            new GridColumn {Field="imageUrl",Label="Ürün",RenderType="image",Position=0,Width=76,Mobile=false},
-            new GridColumn {Field="code",Label="Ürün kodu",Position=1,Width=112,Mobile=false},
-            new GridColumn {Field="name",Label="Ürün adı",RenderType="product",Position=2,Width=290},
-            new GridColumn {Field="brand",Label="Marka",Position=3,Width=150,Mobile=false},
-            new GridColumn {Field="stock",Label="Stok",RenderType="stock",Position=4,Width=105,Mobile=false},
-            new GridColumn {Field="price",Label="Birim fiyat",RenderType="money",Position=5,Width=125,Align="right"},
-            new GridColumn {Field="quantity",Label="Adet / Sepete ekle",RenderType="purchase",Position=6,Width=180,Align="right"},
-            new GridColumn {Field="manufacturerCode",Label="Üretici kodu",Position=7,Width=130,Desktop=false,Tablet=false,Mobile=false},
-            new GridColumn {Field="specialCode1",Label="Özel kod 1",Position=8,Width=130,Desktop=false,Tablet=false,Mobile=false},
-            new GridColumn {Field="specialCode2",Label="Özel kod 2",Position=9,Width=130,Desktop=false,Tablet=false,Mobile=false},
-            new GridColumn {Field="description",Label="Açıklama",Position=10,Width=280,Desktop=false,Tablet=false,Mobile=false}})
-            await db.ExecuteAsync("INSERT INTO GridColumns(Field,Label,RenderType,Position,Width,Align,Desktop,Tablet,Mobile) VALUES(@Field,@Label,@RenderType,@Position,@Width,@Align,@Desktop,@Tablet,@Mobile)", c, tx);
-        await db.ExecuteAsync("INSERT INTO Banners(Title,Subtitle,ButtonText,SearchTerm,IsActive,Position) VALUES(N'Doğru teşhis. Güçlü servis.',N'Profesyonel diagnostik çözümlerini tek bir yerden keşfedin.',N'Cihazları incele',N'Diagnostik',1,0),(N'Her bağlantıda güven.',N'Servisinizin ihtiyaç duyduğu kablo ve adaptörler.',N'Bağlantı ürünleri',N'kablo',1,1);", transaction: tx);
+        user.PasswordHash = hasher.HashPassword(user, password);
+        return user;
+    }
+
+    private static async Task Seed(BusinessDbContext db)
+    {
+        var categories = new[]
+        {
+            new Category { Name = "Diagnostik cihazlar" },
+            new Category { Name = "Elektronik parçalar" },
+            new Category { Name = "Servis ekipmanları" },
+            new Category { Name = "Bağlantı & kablolar" }
+        };
+        db.Categories.AddRange(categories);
+        await db.SaveChangesAsync();
+
+        var items = new[]
+        {
+            new Product { Code="DG-001", Name="Profesyonel arıza tespit cihazı", Brand="U1 Diagnostic", ManufacturerCode="PRO-X7", CategoryId=categories[0].Id, Price=24900m, Stock=24, CriticalStock=5, Description="OBD-II uyumlu araçlarda kapsamlı arıza okuma ve canlı veri takibi. 10 inç dokunmatik ekran, kablosuz bağlantı.", ImageUrl="/images/diagnostic.svg", SpecialCode1="AUTO-DG", SpecialCode2="2026" },
+            new Product { Code="DG-002", Name="Kompakt OBD-II test cihazı", Brand="U1 Diagnostic", ManufacturerCode="SCAN-S2", CategoryId=categories[0].Id, Price=3850m, Stock=8, CriticalStock=10, Description="Servis ve saha kullanımı için taşınabilir hata kodu okuyucu. OBD-II protokolleriyle uyumlu.", ImageUrl="/images/diagnostic.svg", SpecialCode1="AUTO-DG", SpecialCode2="2026" },
+            new Product { Code="EL-101", Name="Motor kontrol ünitesi", Brand="U1 Electronics", ManufacturerCode="ECU-240", CategoryId=categories[1].Id, Price=12750m, Stock=16, CriticalStock=4, Description="Otomotiv motor yönetimi için elektronik kontrol modülü. Sipariş öncesinde araç uyumluluğunu kontrol edin.", ImageUrl="/images/module.svg", SpecialCode1="AUTO-EL", SpecialCode2="2026" },
+            new Product { Code="EL-102", Name="ABS sensörü · ön teker", Brand="U1 Electronics", ManufacturerCode="ABS-F01", CategoryId=categories[1].Id, Price=680m, Stock=64, CriticalStock=15, Description="Ön teker hız ölçümü için hassas ABS sensörü. Kablo ve bağlantı soketi dahildir.", ImageUrl="/images/cable.svg", SpecialCode1="AUTO-EL", SpecialCode2="2026" },
+            new Product { Code="SR-201", Name="Dijital akü test cihazı", Brand="U1 Service", ManufacturerCode="BAT-600", CategoryId=categories[2].Id, Price=2450m, Stock=3, CriticalStock=5, Description="12V aküler için şarj, marş ve sağlık kontrolü. Kolay okunur dijital ekran.", ImageUrl="/images/diagnostic.svg", SpecialCode1="AUTO-SR", SpecialCode2="2026" },
+            new Product { Code="KB-301", Name="OBD-II bağlantı kablosu", Brand="U1 Connect", ManufacturerCode="OBD-16P", CategoryId=categories[3].Id, Price=450m, Stock=120, CriticalStock=20, Description="16 pin OBD-II uzatma kablosu, 1,5 metre. Yoğun servis kullanımına uygun dayanıklı bağlantılar.", ImageUrl="/images/cable.svg", SpecialCode1="AUTO-KB", SpecialCode2="2026" },
+            new Product { Code="SR-202", Name="Profesyonel dijital multimetre", Brand="U1 Service", ManufacturerCode="DMM-820", CategoryId=categories[2].Id, Price=1890m, Stock=0, CriticalStock=5, Description="Gerilim, akım ve direnç ölçümü için otomatik aralıklı dijital multimetre.", ImageUrl="/images/diagnostic.svg", SpecialCode1="AUTO-SR", SpecialCode2="2026" },
+            new Product { Code="EL-103", Name="Oksijen sensörü", Brand="U1 Electronics", ManufacturerCode="O2-4W", CategoryId=categories[1].Id, Price=1250m, Stock=32, CriticalStock=8, Description="Dört kablolu oksijen sensörü. Yakıt kontrol sistemleri için yedek parça.", ImageUrl="/images/cable.svg", SpecialCode1="AUTO-EL", SpecialCode2="2026" },
+            new Product { Code="KB-302", Name="Diagnostik adaptör seti", Brand="U1 Connect", ManufacturerCode="ADP-8", CategoryId=categories[3].Id, Price=3200m, Stock=19, CriticalStock=5, Description="Farklı araç bağlantıları için 8 parçalı diagnostik adaptör seti.", ImageUrl="/images/cable.svg", SpecialCode1="AUTO-KB", SpecialCode2="2026" },
+            new Product { Code="SR-203", Name="Elektronik test probu seti", Brand="U1 Service", ManufacturerCode="PROBE-12", CategoryId=categories[2].Id, Price=950m, Stock=47, CriticalStock=10, Description="Hassas elektronik ölçümler için 12 parçalı test probu ve bağlantı aksesuarları.", ImageUrl="/images/cable.svg", SpecialCode1="AUTO-SR", SpecialCode2="2026" },
+            new Product { Code="EL-104", Name="Röle kontrol modülü", Brand="U1 Electronics", ManufacturerCode="RLY-12V", CategoryId=categories[1].Id, Price=790m, Stock=28, CriticalStock=6, Description="12V otomotiv devreleri için kompakt röle kontrol ünitesi.", ImageUrl="/images/module.svg", SpecialCode1="AUTO-EL", SpecialCode2="2026" },
+            new Product { Code="DG-003", Name="Kablosuz diagnostik arayüz", Brand="U1 Diagnostic", ManufacturerCode="VCI-BT", CategoryId=categories[0].Id, Price=6900m, Stock=11, CriticalStock=5, Description="Uyumlu diagnostik yazılımlarla Bluetooth üzerinden araç veri bağlantısı.", ImageUrl="/images/module.svg", SpecialCode1="AUTO-DG", SpecialCode2="2026" }
+        };
+        db.Products.AddRange(items);
+
+        db.GridColumns.AddRange(
+            new GridColumn { Field="imageUrl", Label="Ürün", RenderType="image", Position=0, Width=76, Mobile=false },
+            new GridColumn { Field="code", Label="Ürün kodu", Position=1, Width=112, Mobile=false },
+            new GridColumn { Field="name", Label="Ürün adı", RenderType="product", Position=2, Width=290 },
+            new GridColumn { Field="brand", Label="Marka", Position=3, Width=150, Mobile=false },
+            new GridColumn { Field="stock", Label="Stok", RenderType="stock", Position=4, Width=105, Mobile=false },
+            new GridColumn { Field="price", Label="Birim fiyat", RenderType="money", Position=5, Width=125, Align="right" },
+            new GridColumn { Field="quantity", Label="Adet / Sepete ekle", RenderType="purchase", Position=6, Width=180, Align="right" },
+            new GridColumn { Field="manufacturerCode", Label="Üretici kodu", Position=7, Width=130, Desktop=false, Tablet=false, Mobile=false },
+            new GridColumn { Field="specialCode1", Label="Özel kod 1", Position=8, Width=130, Desktop=false, Tablet=false, Mobile=false },
+            new GridColumn { Field="specialCode2", Label="Özel kod 2", Position=9, Width=130, Desktop=false, Tablet=false, Mobile=false },
+            new GridColumn { Field="description", Label="Açıklama", Position=10, Width=280, Desktop=false, Tablet=false, Mobile=false }
+        );
+
+        db.Banners.AddRange(
+            new Banner { Title="Doğru teşhis. Güçlü servis.", Subtitle="Profesyonel diagnostik çözümlerini tek bir yerden keşfedin.", ButtonText="Cihazları incele", SearchTerm="Diagnostik", IsActive=true, Position=0 },
+            new Banner { Title="Her bağlantıda güven.", Subtitle="Servisinizin ihtiyaç duyduğu kablo ve adaptörler.", ButtonText="Bağlantı ürünleri", SearchTerm="kablo", IsActive=true, Position=1 }
+        );
+
+        await db.SaveChangesAsync();
     }
 }

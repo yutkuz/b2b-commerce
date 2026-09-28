@@ -1,12 +1,13 @@
 using System.Data;
-using Dapper;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using U1.Business.Data;
 using U1.Business.Domain;
 
 namespace U1.Business.Services;
 
-public sealed class OrderService(Database database)
+public sealed class OrderService(IDbContextFactory<BusinessDbContext> dbFactory)
 {
     private const int DeadlockErrorNumber = 1205;
     private const int MaxDeadlockAttempts = 3;
@@ -24,11 +25,11 @@ public sealed class OrderService(Database database)
             {
                 return await CheckoutOnce(userId, input);
             }
-            catch (SqlException ex) when (ex.Number == DeadlockErrorNumber && attempt < MaxDeadlockAttempts)
+            catch (Exception ex) when (IsDeadlock(ex) && attempt < MaxDeadlockAttempts)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(40 * attempt));
             }
-            catch (SqlException ex) when (ex.Number == DeadlockErrorNumber)
+            catch (Exception ex) when (IsDeadlock(ex))
             {
                 throw new BusinessException(
                     "Sipariş işlemi geçici yoğunluk nedeniyle tamamlanamadı. Aynı siparişi biraz sonra tekrar deneyin.",
@@ -39,6 +40,10 @@ public sealed class OrderService(Database database)
 
         throw new InvalidOperationException("Sipariş yeniden deneme döngüsü beklenmeyen şekilde sona erdi.");
     }
+
+    private static bool IsDeadlock(Exception ex) =>
+        ex is SqlException { Number: DeadlockErrorNumber }
+        || ex.InnerException is not null && IsDeadlock(ex.InnerException);
 
     private static void ValidateCheckout(CheckoutInput input)
     {
@@ -65,32 +70,36 @@ public sealed class OrderService(Database database)
         var approvedLines = input.Lines
             ?? throw new BusinessException("Sipariş onayındaki ürün bilgileri geçersiz.");
 
-        using var db = database.Open();
-        await db.OpenAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
 
-        using var tx = db.BeginTransaction(IsolationLevel.ReadCommitted);
+        var cartId = await LockCart(db, userId);
+        await LockRequest(db, input.RequestId);
 
-        var cartId = await LockCart(db, tx, userId);
-        await LockRequest(db, tx, input.RequestId);
-
-        var existingOrder = await FindExistingOrder(db, tx, userId, input.RequestId);
+        var existingOrder = await FindExistingOrder(db, userId, input.RequestId);
         if (existingOrder is not null)
         {
-            tx.Commit();
+            await tx.CommitAsync();
             return existingOrder;
         }
 
-        await EnsureRequestIdIsAvailable(db, tx, input.RequestId);
+        await EnsureRequestIdIsAvailable(db, input.RequestId);
 
-        var cartLines = (await db.QueryAsync<CartLine>(
-            "SELECT ProductId,Quantity FROM CartItems WHERE CartId=@cartId ORDER BY ProductId",
-            new { cartId },
-            tx)).ToList();
+        var cartLines = await db.CartItems
+            .AsNoTracking()
+            .Where(x => x.CartId == cartId)
+            .OrderBy(x => x.ProductId)
+            .Select(x => new CartLine
+            {
+                ProductId = x.ProductId,
+                Quantity = x.Quantity
+            })
+            .ToListAsync();
 
         if (cartLines.Count == 0)
             throw CartChanged();
 
-        await LoadProductSnapshots(db, tx, cartLines);
+        await LoadProductSnapshots(db, cartLines);
 
         if (!MatchesApprovedCart(cartLines, approvedLines))
             throw CartChanged();
@@ -98,96 +107,77 @@ public sealed class OrderService(Database database)
         EnsureStockIsAvailable(cartLines);
 
         var total = cartLines.Sum(line => line.Quantity * line.Product.Price);
-        var orderNumber = CreateOrderNumber();
+        var order = new Order
+        {
+            Number = CreateOrderNumber(),
+            UserId = userId,
+            Total = total,
+            RequestId = input.RequestId,
+            Note = input.Note?.Trim() ?? "",
+            Status = "Bekliyor"
+        };
 
-        var orderId = await db.ExecuteScalarAsync<int>(
-            """
-            INSERT INTO Orders(Number,UserId,Total,RequestId,Note)
-            OUTPUT INSERTED.Id
-            VALUES(@orderNumber,@userId,@total,@RequestId,@note)
-            """,
-            new
-            {
-                orderNumber,
-                userId,
-                total,
-                input.RequestId,
-                note = input.Note?.Trim() ?? ""
-            },
-            tx);
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
 
         foreach (var line in cartLines)
         {
-            await db.ExecuteAsync(
-                """
-                INSERT INTO OrderItems(
-                    OrderId,ProductId,ProductCode,ProductName,Quantity,UnitPrice,Total
-                )
-                VALUES(
-                    @orderId,@ProductId,@Code,@Name,@Quantity,@Price,@lineTotal
-                );
-
-                UPDATE Products
-                SET Stock=Stock-@Quantity
-                WHERE Id=@ProductId;
-                """,
-                new
-                {
-                    orderId,
-                    line.ProductId,
-                    line.Product.Code,
-                    line.Product.Name,
-                    line.Quantity,
-                    line.Product.Price,
-                    lineTotal = line.Quantity * line.Product.Price
-                },
-                tx);
+            db.OrderItems.Add(new OrderItem
+            {
+                OrderId = order.Id,
+                ProductId = line.ProductId,
+                ProductCode = line.Product.Code,
+                ProductName = line.Product.Name,
+                Quantity = line.Quantity,
+                UnitPrice = line.Product.Price,
+                Total = line.Quantity * line.Product.Price
+            });
+            line.Product.Stock -= line.Quantity;
         }
 
-        await db.ExecuteAsync(
-            "DELETE FROM CartItems WHERE CartId=@cartId",
-            new { cartId },
-            tx);
+        await db.CartItems
+            .Where(x => x.CartId == cartId)
+            .ExecuteDeleteAsync();
 
-        tx.Commit();
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         return new
         {
-            Id = orderId,
-            Number = orderNumber,
-            Total = total
+            Id = order.Id,
+            order.Number,
+            order.Total
         };
     }
 
-    private static async Task<int> LockCart(SqlConnection db, SqlTransaction tx, int userId)
+    private static async Task<int> LockCart(BusinessDbContext db, int userId)
     {
-        var cartId = await db.ExecuteScalarAsync<int?>(
-            "SELECT Id FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId=@userId",
-            new { userId },
-            tx);
+        var cart = await db.Carts
+            .FromSqlInterpolated($"SELECT * FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId={userId}")
+            .AsNoTracking()
+            .SingleOrDefaultAsync();
 
-        return cartId
+        return cart?.Id
             ?? throw new BusinessException("Sepet bulunamadı.", 404);
     }
 
-    private static async Task LockRequest(
-        SqlConnection db,
-        SqlTransaction tx,
-        Guid requestId)
+    private static async Task LockRequest(BusinessDbContext db, Guid requestId)
     {
         var resource = "U1Business.Order." + requestId.ToString("N");
+        var connection = (SqlConnection)db.Database.GetDbConnection();
 
-        var lockResult = await db.ExecuteScalarAsync<int>(
-            """
+        using var command = connection.CreateCommand();
+        command.Transaction = (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction();
+        command.CommandText = """
             EXEC sp_getapplock
                 @Resource=@resource,
                 @LockMode='Exclusive',
                 @LockOwner='Transaction',
                 @LockTimeout=30000
-            """,
-            new { resource },
-            tx);
+            """;
+        command.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, 255) { Value = resource });
 
+        var lockResult = Convert.ToInt32(await command.ExecuteScalarAsync());
         if (lockResult < 0)
         {
             throw new BusinessException(
@@ -197,35 +187,28 @@ public sealed class OrderService(Database database)
         }
     }
 
-    private static Task<OrderSummary?> FindExistingOrder(
-        SqlConnection db,
-        SqlTransaction tx,
+    private static async Task<OrderSummary?> FindExistingOrder(
+        BusinessDbContext db,
         int userId,
-        Guid requestId) =>
-        db.QuerySingleOrDefaultAsync<OrderSummary>(
-            """
-            SELECT Id,Number,Total
-            FROM Orders WITH(READCOMMITTEDLOCK)
-            WHERE RequestId=@requestId AND UserId=@userId
-            """,
-            new { requestId, userId },
-            tx);
-
-    private static async Task EnsureRequestIdIsAvailable(
-        SqlConnection db,
-        SqlTransaction tx,
         Guid requestId)
     {
-        var requestIdExists = await db.ExecuteScalarAsync<int>(
-            """
-            SELECT COUNT(*)
-            FROM Orders WITH(READCOMMITTEDLOCK)
-            WHERE RequestId=@requestId
-            """,
-            new { requestId },
-            tx) > 0;
+        return await db.Orders
+            .AsNoTracking()
+            .Where(x => x.RequestId == requestId && x.UserId == userId)
+            .Select(x => new OrderSummary
+            {
+                Id = x.Id,
+                Number = x.Number,
+                Total = x.Total
+            })
+            .SingleOrDefaultAsync();
+    }
 
-        if (requestIdExists)
+    private static async Task EnsureRequestIdIsAvailable(
+        BusinessDbContext db,
+        Guid requestId)
+    {
+        if (await db.Orders.AsNoTracking().AnyAsync(x => x.RequestId == requestId))
         {
             throw new BusinessException(
                 "Bu sipariş anahtarı kullanılamaz.",
@@ -235,20 +218,14 @@ public sealed class OrderService(Database database)
     }
 
     private static async Task LoadProductSnapshots(
-        SqlConnection db,
-        SqlTransaction tx,
+        BusinessDbContext db,
         IReadOnlyList<CartLine> lines)
     {
         foreach (var line in lines)
         {
-            line.Product = await db.QuerySingleAsync<ProductSnapshot>(
-                """
-                SELECT Code,Name,Price,Stock
-                FROM Products WITH(UPDLOCK,HOLDLOCK)
-                WHERE Id=@ProductId
-                """,
-                new { line.ProductId },
-                tx);
+            line.Product = await db.Products
+                .FromSqlInterpolated($"SELECT * FROM Products WITH(UPDLOCK,HOLDLOCK) WHERE Id={line.ProductId}")
+                .SingleAsync();
         }
     }
 
@@ -298,24 +275,21 @@ public sealed class OrderService(Database database)
         if (status is not ("Onaylandı" or "Reddedildi"))
             throw new BusinessException("Geçersiz sipariş durumu.");
 
-        using var db = database.Open();
-        await db.OpenAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
-        using var tx = db.BeginTransaction(IsolationLevel.Serializable);
-
-        var currentStatus = await db.QuerySingleOrDefaultAsync<string>(
-            "SELECT Status FROM Orders WITH(UPDLOCK,HOLDLOCK) WHERE Id=@id",
-            new { id },
-            tx)
+        var order = await db.Orders
+            .FromSqlInterpolated($"SELECT * FROM Orders WITH(UPDLOCK,HOLDLOCK) WHERE Id={id}")
+            .SingleOrDefaultAsync()
             ?? throw new BusinessException("Sipariş bulunamadı.", 404);
 
-        if (currentStatus == status)
+        if (order.Status == status)
         {
-            tx.Commit();
+            await tx.CommitAsync();
             return;
         }
 
-        if (currentStatus == "Reddedildi")
+        if (order.Status == "Reddedildi")
         {
             throw new BusinessException(
                 "Reddedilen sipariş yeniden açılamaz. Yeni sipariş oluşturun.",
@@ -323,45 +297,37 @@ public sealed class OrderService(Database database)
         }
 
         if (status == "Reddedildi")
-            await RestoreStock(db, tx, id);
+            await RestoreStock(db, id);
 
-        await db.ExecuteAsync(
-            "UPDATE Orders SET Status=@status WHERE Id=@id",
-            new { id, status },
-            tx);
-
-        tx.Commit();
+        order.Status = status;
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
     }
 
-    private static async Task RestoreStock(
-        SqlConnection db,
-        SqlTransaction tx,
-        int orderId)
+    private static async Task RestoreStock(BusinessDbContext db, int orderId)
     {
-        var lines = await db.QueryAsync<CartLine>(
-            "SELECT ProductId,Quantity FROM OrderItems WHERE OrderId=@orderId ORDER BY ProductId",
-            new { orderId },
-            tx);
+        var lines = await db.OrderItems
+            .AsNoTracking()
+            .Where(x => x.OrderId == orderId)
+            .OrderBy(x => x.ProductId)
+            .Select(x => new { x.ProductId, x.Quantity })
+            .ToListAsync();
 
         foreach (var line in lines)
         {
-            var updated = await db.ExecuteAsync(
-                """
-                UPDATE Products
-                SET Stock=Stock+@Quantity
-                WHERE Id=@ProductId
-                  AND Stock<=2147483647-@Quantity
-                """,
-                line,
-                tx);
+            var product = await db.Products
+                .FromSqlInterpolated($"SELECT * FROM Products WITH(UPDLOCK,HOLDLOCK) WHERE Id={line.ProductId}")
+                .SingleAsync();
 
-            if (updated != 1)
+            if (product.Stock > int.MaxValue - line.Quantity)
             {
                 throw new BusinessException(
                     "Stok iadesi tam sayı sınırını aşıyor. Fiziksel stoğu kontrol edin.",
                     409,
                     "STOCK_LIMIT");
             }
+
+            product.Stock += line.Quantity;
         }
     }
 
@@ -376,14 +342,6 @@ public sealed class OrderService(Database database)
     {
         public int ProductId { get; set; }
         public int Quantity { get; set; }
-        public ProductSnapshot Product { get; set; } = new();
-    }
-
-    private sealed class ProductSnapshot
-    {
-        public string Code { get; set; } = "";
-        public string Name { get; set; } = "";
-        public decimal Price { get; set; }
-        public int Stock { get; set; }
+        public Product Product { get; set; } = null!;
     }
 }

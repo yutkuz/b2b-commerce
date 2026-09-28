@@ -1,8 +1,8 @@
 using System.Security.Claims;
-using Dapper;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
 
@@ -49,7 +49,7 @@ public static class AuthEndpoints
                 "/api/auth/register",
                 async (
                     RegisterInput input,
-                    Database database,
+                    BusinessDbContext db,
                     IPasswordHasher<User> hasher,
                     HttpContext c
                 ) =>
@@ -58,9 +58,8 @@ public static class AuthEndpoints
                         throw new BusinessException("Kayıt bilgileri gerekli.");
                     input.Company ??= "";
                     Rules.Validate(input);
-                    using var db = database.Open();
-                    await db.OpenAsync();
-                    using var tx = db.BeginTransaction();
+
+                    await using var tx = await db.Database.BeginTransactionAsync();
                     var user = new User
                     {
                         FirstName = input.FirstName.Trim(),
@@ -73,23 +72,24 @@ public static class AuthEndpoints
                         AuthVersion = 1,
                     };
                     user.PasswordHash = hasher.HashPassword(user, input.Password);
-                    user.Id = await db.ExecuteScalarAsync<int>(
-                        "INSERT INTO Users(FirstName,LastName,Email,Phone,Company,PasswordHash) OUTPUT INSERTED.Id VALUES(@FirstName,@LastName,@Email,@Phone,@Company,@PasswordHash)",
-                        user,
-                        tx
-                    );
-                    await db.ExecuteAsync("INSERT INTO Carts(UserId) VALUES(@Id)", user, tx);
-                    tx.Commit();
+
+                    db.Users.Add(user);
+                    await db.SaveChangesAsync();
+                    db.Carts.Add(new Cart { UserId = user.Id });
+                    await db.SaveChangesAsync();
+                    await tx.CommitAsync();
+
                     await SignIn(c, user);
                     return Results.Ok(PublicUser(user));
                 }
             )
             .RequireRateLimiting("auth");
+
         app.MapPost(
                 "/api/auth/login",
                 async (
                     LoginInput input,
-                    Database database,
+                    BusinessDbContext db,
                     IPasswordHasher<User> hasher,
                     HttpContext c
                 ) =>
@@ -102,11 +102,9 @@ public static class AuthEndpoints
                         || input.Password.Length > 128
                     )
                         throw new BusinessException("E-posta ve şifrenizi kontrol edin.", 401);
-                    using var db = database.Open();
-                    var u = await db.QuerySingleOrDefaultAsync<User>(
-                        "SELECT * FROM Users WHERE Email=@email",
-                        new { email = input.Email.Trim().ToLowerInvariant() }
-                    );
+
+                    var email = input.Email.Trim().ToLowerInvariant();
+                    var u = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Email == email);
                     if (
                         u is null
                         || !u.IsActive
@@ -114,11 +112,13 @@ public static class AuthEndpoints
                             == PasswordVerificationResult.Failed
                     )
                         throw new BusinessException("E-posta veya şifre hatalı.", 401);
+
                     await SignIn(c, u);
                     return Results.Ok(PublicUser(u));
                 }
             )
             .RequireRateLimiting("auth");
+
         app.MapPost(
                 "/api/auth/logout",
                 async (HttpContext c) =>
@@ -128,17 +128,14 @@ public static class AuthEndpoints
                 }
             )
             .RequireAuthorization();
+
         app.MapGet(
                 "/api/auth/me",
-                async (Database database, HttpContext c) =>
+                async (BusinessDbContext db, HttpContext c) =>
                 {
-                    using var db = database.Open();
-                    return PublicUser(
-                        await db.QuerySingleAsync<User>(
-                            "SELECT * FROM Users WHERE Id=@id",
-                            new { id = c.UserId() }
-                        )
-                    );
+                    var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == c.UserId())
+                        ?? throw new BusinessException("Kullanıcı bulunamadı.", 404);
+                    return PublicUser(user);
                 }
             )
             .RequireAuthorization();
