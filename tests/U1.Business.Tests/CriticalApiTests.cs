@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,7 +35,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:SqlServer"] = ConnectionString
+                ["ConnectionStrings:SqlServer"] = ConnectionString,
+                ["DatabaseLocks:OrderTimeoutMilliseconds"] = "250"
             });
         });
     }
@@ -339,6 +341,70 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
 public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
+    public async Task Checkout_lock_timeout_returns_controlled_error_and_rolls_back_every_change()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await factory.ResetCheckoutState();
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var adminToken = await ApiTest.LoginAdmin(admin);
+        var code = "CI-" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var created = await ApiTest.SendJson(admin, HttpMethod.Post, "/api/admin/products",
+            ApiTest.ProductPayload(code, stock: 5, price: 100m), adminToken);
+        created.EnsureSuccessStatusCode();
+        var createdBody = await created.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        var productId = ApiTest.Property(createdBody, "id").GetInt32();
+
+        using var buyer = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var buyerEmail = $"ci-{Guid.NewGuid():N}@example.test";
+        var buyerToken = await ApiTest.RegisterDealer(buyer, buyerEmail);
+        var add = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/cart",
+            new { productId, quantity = 2 }, buyerToken);
+        add.EnsureSuccessStatusCode();
+
+        var requestId = Guid.NewGuid();
+        await using var blocker = new SqlConnection(ApiFactory.ConnectionString);
+        await blocker.OpenAsync(cancellationToken);
+        using var acquire = blocker.CreateCommand();
+        acquire.CommandText = """
+            DECLARE @result int;
+            EXEC @result = sys.sp_getapplock
+                @Resource = @resource,
+                @LockMode = 'Exclusive',
+                @LockOwner = 'Session',
+                @LockTimeout = 0;
+            SELECT @result;
+            """;
+        acquire.Parameters.AddWithValue("@resource", "U1Business.Order." + requestId.ToString("N"));
+        Assert.True(Convert.ToInt32(await acquire.ExecuteScalarAsync(cancellationToken)) >= 0);
+
+        var response = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/orders", new
+        {
+            requestId,
+            note = "CI locked order",
+            lines = new[] { new { productId, quantity = 2, unitPrice = 100m } }
+        }, buyerToken);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        Assert.Equal("REQUEST_BUSY", ApiTest.Property(error, "code").GetString());
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+        Assert.False(await db.Orders.AnyAsync(x => x.RequestId == requestId, cancellationToken));
+        Assert.Equal(5, await db.Products
+            .Where(x => x.Id == productId)
+            .Select(x => x.Stock)
+            .SingleAsync(cancellationToken));
+        Assert.Equal(2, await (
+            from item in db.CartItems
+            join cart in db.Carts on item.CartId equals cart.Id
+            join user in db.Users on cart.UserId equals user.Id
+            where item.ProductId == productId && user.Email == buyerEmail
+            select item.Quantity).SingleAsync(cancellationToken));
+    }
+
+    [Fact]
     public async Task Eight_concurrent_dealers_can_checkout_without_server_errors()
     {
         await factory.ResetCheckoutState();
@@ -395,6 +461,93 @@ public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture
             foreach (var client in clients)
                 client.Dispose();
         }
+    }
+}
+
+public sealed class DatabaseApplicationLockTests(ApiFactory factory) : IClassFixture<ApiFactory>
+{
+    [Fact]
+    public async Task Database_creation_lock_timeout_stops_before_schema_or_data_changes()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var before = await ReadDatabaseState(cancellationToken);
+
+        var builder = new SqlConnectionStringBuilder(ApiFactory.ConnectionString)
+        {
+            InitialCatalog = "master"
+        };
+        await using var blocker = new SqlConnection(builder.ConnectionString);
+        await blocker.OpenAsync(cancellationToken);
+        await AcquireSessionLock(
+            blocker,
+            "U1Business.Create." + ApiFactory.DatabaseName,
+            cancellationToken);
+
+        var database = CreateDatabaseWithShortLockTimeout();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => database.Initialize(development: true));
+
+        Assert.Equal("Veritabanı oluşturma kilidi alınamadı.", error.Message);
+        Assert.Equal(before, await ReadDatabaseState(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Schema_lock_timeout_rolls_back_without_schema_or_data_changes()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var before = await ReadDatabaseState(cancellationToken);
+
+        await using var blocker = new SqlConnection(ApiFactory.ConnectionString);
+        await blocker.OpenAsync(cancellationToken);
+        await AcquireSessionLock(blocker, "U1Business.Schema", cancellationToken);
+
+        var database = CreateDatabaseWithShortLockTimeout();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => database.Initialize(development: true));
+
+        Assert.Equal("Şema yükseltme kilidi alınamadı.", error.Message);
+        Assert.Equal(before, await ReadDatabaseState(cancellationToken));
+    }
+
+    private async Task<(int SchemaVersion, int Products, int Orders)> ReadDatabaseState(
+        CancellationToken cancellationToken)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+        return (
+            await db.SchemaVersions.MaxAsync(x => x.Version, cancellationToken),
+            await db.Products.CountAsync(cancellationToken),
+            await db.Orders.CountAsync(cancellationToken));
+    }
+
+    private Database CreateDatabaseWithShortLockTimeout()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:SqlServer"] = ApiFactory.ConnectionString,
+                ["DatabaseLocks:InitializationTimeoutMilliseconds"] = "250"
+            })
+            .Build();
+        var dbFactory = factory.Services.GetRequiredService<IDbContextFactory<BusinessDbContext>>();
+        return new Database(config, dbFactory);
+    }
+
+    private static async Task AcquireSessionLock(
+        SqlConnection connection,
+        string resource,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DECLARE @result int;
+            EXEC @result = sys.sp_getapplock
+                @Resource = @resource,
+                @LockMode = 'Exclusive',
+                @LockOwner = 'Session',
+                @LockTimeout = 0;
+            SELECT @result;
+            """;
+        command.Parameters.AddWithValue("@resource", resource);
+        Assert.True(Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) >= 0);
     }
 }
 

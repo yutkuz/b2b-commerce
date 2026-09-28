@@ -11,6 +11,9 @@ public sealed class Database(
     IConfiguration config,
     IDbContextFactory<BusinessDbContext> dbFactory)
 {
+    private readonly int initializationLockTimeoutMilliseconds =
+        config.GetValue<int?>("DatabaseLocks:InitializationTimeoutMilliseconds") ?? 30_000;
+
     public async Task Initialize(bool development)
     {
         var connectionString = config.GetConnectionString("SqlServer")
@@ -30,10 +33,12 @@ public sealed class Database(
             await master.OpenAsync();
             var resource = "U1Business.Create." + name;
 
-            using var acquire = master.CreateCommand();
-            acquire.CommandText = "EXEC sp_getapplock @Resource=@resource, @LockMode='Exclusive', @LockOwner='Session', @LockTimeout=30000";
-            acquire.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, 255) { Value = resource });
-            var createLock = Convert.ToInt32(await acquire.ExecuteScalarAsync());
+            var createLock = await SqlApplicationLock.AcquireAsync(
+                master,
+                transaction: null,
+                resource,
+                owner: "Session",
+                initializationLockTimeoutMilliseconds);
             if (createLock < 0)
                 throw new InvalidOperationException("Veritabanı oluşturma kilidi alınamadı.");
 
@@ -46,10 +51,7 @@ public sealed class Database(
             }
             finally
             {
-                using var release = master.CreateCommand();
-                release.CommandText = "EXEC sp_releaseapplock @Resource=@resource, @LockOwner='Session'";
-                release.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, 255) { Value = resource });
-                await release.ExecuteNonQueryAsync();
+                await SqlApplicationLock.ReleaseAsync(master, resource, owner: "Session");
             }
         }
 
@@ -58,9 +60,12 @@ public sealed class Database(
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         var assembly = typeof(Database).Assembly;
 
-        var lockResult = await ExecuteScalarAsync(
-            db,
-            "EXEC sp_getapplock @Resource='U1Business.Schema', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=30000");
+        var lockResult = await SqlApplicationLock.AcquireAsync(
+            (SqlConnection)db.Database.GetDbConnection(),
+            (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction(),
+            "U1Business.Schema",
+            owner: "Transaction",
+            initializationLockTimeoutMilliseconds);
         if (lockResult < 0)
             throw new InvalidOperationException("Şema yükseltme kilidi alınamadı.");
 
@@ -86,15 +91,6 @@ public sealed class Database(
         await InitializeDemo(db, development);
         await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.002-demo-visuals.sql"));
         await tx.CommitAsync();
-    }
-
-    private static async Task<int> ExecuteScalarAsync(BusinessDbContext db, string sql)
-    {
-        var connection = (SqlConnection)db.Database.GetDbConnection();
-        using var command = connection.CreateCommand();
-        command.Transaction = (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction();
-        command.CommandText = sql;
-        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private static async Task<string> ReadResource(System.Reflection.Assembly assembly, string name)

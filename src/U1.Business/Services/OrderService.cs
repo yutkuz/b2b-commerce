@@ -7,10 +7,14 @@ using U1.Business.Domain;
 
 namespace U1.Business.Services;
 
-public sealed class OrderService(IDbContextFactory<BusinessDbContext> dbFactory)
+public sealed class OrderService(
+    IDbContextFactory<BusinessDbContext> dbFactory,
+    IConfiguration config)
 {
     private const int DeadlockErrorNumber = 1205;
     private const int MaxDeadlockAttempts = 3;
+    private readonly int requestLockTimeoutMilliseconds =
+        config.GetValue<int?>("DatabaseLocks:OrderTimeoutMilliseconds") ?? 30_000;
 
     public async Task<object> Checkout(int userId, CheckoutInput? input)
     {
@@ -161,23 +165,17 @@ public sealed class OrderService(IDbContextFactory<BusinessDbContext> dbFactory)
             ?? throw new BusinessException("Sepet bulunamadı.", 404);
     }
 
-    private static async Task LockRequest(BusinessDbContext db, Guid requestId)
+    private async Task LockRequest(BusinessDbContext db, Guid requestId)
     {
         var resource = "U1Business.Order." + requestId.ToString("N");
         var connection = (SqlConnection)db.Database.GetDbConnection();
 
-        using var command = connection.CreateCommand();
-        command.Transaction = (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction();
-        command.CommandText = """
-            EXEC sp_getapplock
-                @Resource=@resource,
-                @LockMode='Exclusive',
-                @LockOwner='Transaction',
-                @LockTimeout=30000
-            """;
-        command.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, 255) { Value = resource });
-
-        var lockResult = Convert.ToInt32(await command.ExecuteScalarAsync());
+        var lockResult = await SqlApplicationLock.AcquireAsync(
+            connection,
+            (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction(),
+            resource,
+            owner: "Transaction",
+            requestLockTimeoutMilliseconds);
         if (lockResult < 0)
         {
             throw new BusinessException(
