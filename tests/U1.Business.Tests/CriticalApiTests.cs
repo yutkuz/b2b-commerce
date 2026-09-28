@@ -14,9 +14,12 @@ namespace U1.Business.Tests;
 
 public sealed class ApiFactory : WebApplicationFactory<Program>
 {
-    public const string DatabaseName = "U1Business_CI";
-    public const string ConnectionString =
-        @"Server=(localdb)\MSSQLLocalDB;Database=U1Business_CI;Integrated Security=true;TrustServerCertificate=true;Connect Timeout=30";
+    private static readonly string RunId = Guid.NewGuid().ToString("N")[..12];
+
+    public static string DatabaseName { get; } = $"U1Business_CI_{RunId}";
+
+    public static string ConnectionString { get; } =
+        $@"Server=(localdb)\MSSQLLocalDB;Database={DatabaseName};Integrated Security=true;TrustServerCertificate=true;Connect Timeout=30";
 
     public ApiFactory()
     {
@@ -54,6 +57,18 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
 public sealed class CriticalApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
+    [Fact]
+    public async Task Test_database_is_unique_and_isolated_from_the_default_database()
+    {
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+
+        var environment = await client.GetFromJsonAsync<JsonElement>("/api/test-environment");
+
+        Assert.StartsWith("U1Business_CI_", ApiFactory.DatabaseName);
+        Assert.NotEqual("U1Business", ApiFactory.DatabaseName);
+        Assert.Equal(ApiFactory.DatabaseName, Property(environment, "database").GetString());
+    }
+
     [Fact]
     public async Task Eight_concurrent_dealers_can_checkout_without_server_errors()
     {
