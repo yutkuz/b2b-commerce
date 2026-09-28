@@ -373,6 +373,7 @@ public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture
         var requestId = Guid.NewGuid();
         await using var blocker = new SqlConnection(ApiFactory.ConnectionString);
         await blocker.OpenAsync(cancellationToken);
+        var lockResource = "U1Business.Order." + requestId.ToString("N");
         using var acquire = blocker.CreateCommand();
         acquire.CommandText = """
             DECLARE @result int;
@@ -383,33 +384,40 @@ public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture
                 @LockTimeout = 0;
             SELECT @result;
             """;
-        acquire.Parameters.AddWithValue("@resource", "U1Business.Order." + requestId.ToString("N"));
+        acquire.Parameters.AddWithValue("@resource", lockResource);
         Assert.True(Convert.ToInt32(await acquire.ExecuteScalarAsync(cancellationToken)) >= 0);
 
-        var response = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/orders", new
+        try
         {
-            requestId,
-            note = "CI locked order",
-            lines = new[] { new { productId, quantity = 2, unitPrice = 100m } }
-        }, buyerToken);
+            var response = await ApiTest.SendJson(buyer, HttpMethod.Post, "/api/orders", new
+            {
+                requestId,
+                note = "CI locked order",
+                lines = new[] { new { productId, quantity = 2, unitPrice = 100m } }
+            }, buyerToken);
 
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        var error = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
-        Assert.Equal("REQUEST_BUSY", ApiTest.Property(error, "code").GetString());
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            var error = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            Assert.Equal("REQUEST_BUSY", ApiTest.Property(error, "code").GetString());
 
-        using var scope = factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
-        Assert.False(await db.Orders.AnyAsync(x => x.RequestId == requestId, cancellationToken));
-        Assert.Equal(5, await db.Products
-            .Where(x => x.Id == productId)
-            .Select(x => x.Stock)
-            .SingleAsync(cancellationToken));
-        Assert.Equal(2, await (
-            from item in db.CartItems
-            join cart in db.Carts on item.CartId equals cart.Id
-            join user in db.Users on cart.UserId equals user.Id
-            where item.ProductId == productId && user.Email == buyerEmail
-            select item.Quantity).SingleAsync(cancellationToken));
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            Assert.False(await db.Orders.AnyAsync(x => x.RequestId == requestId, cancellationToken));
+            Assert.Equal(5, await db.Products
+                .Where(x => x.Id == productId)
+                .Select(x => x.Stock)
+                .SingleAsync(cancellationToken));
+            Assert.Equal(2, await (
+                from item in db.CartItems
+                join cart in db.Carts on item.CartId equals cart.Id
+                join user in db.Users on cart.UserId equals user.Id
+                where item.ProductId == productId && user.Email == buyerEmail
+                select item.Quantity).SingleAsync(cancellationToken));
+        }
+        finally
+        {
+            await ApiTest.ReleaseSessionLock(blocker, lockResource, cancellationToken);
+        }
     }
 
     [Fact]
@@ -492,11 +500,19 @@ public sealed class DatabaseApplicationLockTests(ApiFactory factory) : IClassFix
             "U1Business.Create." + ApiFactory.DatabaseName,
             cancellationToken);
 
-        var database = CreateDatabaseWithShortLockTimeout();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => database.Initialize(development: true));
+        var lockResource = "U1Business.Create." + ApiFactory.DatabaseName;
+        try
+        {
+            var database = CreateDatabaseWithShortLockTimeout();
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => database.Initialize(development: true));
 
-        Assert.Equal("Veritabanı oluşturma kilidi alınamadı.", error.Message);
-        Assert.Equal(before, await ReadDatabaseState(cancellationToken));
+            Assert.Equal("Veritabanı oluşturma kilidi alınamadı.", error.Message);
+            Assert.Equal(before, await ReadDatabaseState(cancellationToken));
+        }
+        finally
+        {
+            await ApiTest.ReleaseSessionLock(blocker, lockResource, cancellationToken);
+        }
     }
 
     [Fact]
@@ -509,11 +525,19 @@ public sealed class DatabaseApplicationLockTests(ApiFactory factory) : IClassFix
         await blocker.OpenAsync(cancellationToken);
         await AcquireSessionLock(blocker, "U1Business.Schema", cancellationToken);
 
-        var database = CreateDatabaseWithShortLockTimeout();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => database.Initialize(development: true));
+        const string lockResource = "U1Business.Schema";
+        try
+        {
+            var database = CreateDatabaseWithShortLockTimeout();
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => database.Initialize(development: true));
 
-        Assert.Equal("Şema yükseltme kilidi alınamadı.", error.Message);
-        Assert.Equal(before, await ReadDatabaseState(cancellationToken));
+            Assert.Equal("Şema yükseltme kilidi alınamadı.", error.Message);
+            Assert.Equal(before, await ReadDatabaseState(cancellationToken));
+        }
+        finally
+        {
+            await ApiTest.ReleaseSessionLock(blocker, lockResource, cancellationToken);
+        }
     }
 
     private async Task<(int SchemaVersion, int Products, int Orders)> ReadDatabaseState(
@@ -558,6 +582,7 @@ public sealed class DatabaseApplicationLockTests(ApiFactory factory) : IClassFix
         command.Parameters.AddWithValue("@resource", resource);
         Assert.True(Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) >= 0);
     }
+
 }
 
 [Collection(ApiTestCollection.Name)]
@@ -621,6 +646,23 @@ public sealed class UserConcurrencyTests(ApiFactory factory) : IClassFixture<Api
 
 internal static class ApiTest
 {
+    public static async Task ReleaseSessionLock(
+        SqlConnection connection,
+        string resource,
+        CancellationToken cancellationToken)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DECLARE @result int;
+            EXEC @result = sys.sp_releaseapplock
+                @Resource = @resource,
+                @LockOwner = 'Session';
+            SELECT @result;
+            """;
+        command.Parameters.AddWithValue("@resource", resource);
+        Assert.True(Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) >= 0);
+    }
+
     public static object ProductPayload(
         string? code = null,
         int stock = 5,
