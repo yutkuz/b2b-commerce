@@ -4,19 +4,25 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore application
+      - name: Restore solution
         run: dotnet restore U1.Business.sln
 
-      - name: Build application
+      - name: Build solution
         run: dotnet build U1.Business.sln --no-restore --configuration Release -warnaserror
 
       - name: Check JavaScript syntax
@@ -38,8 +44,16 @@ jobs:
             throw "SQL Server LocalDB could not be started."
           }
 
-      - name: Restore API tests
-        run: dotnet restore tests/U1.Business.Tests/U1.Business.Tests.csproj
+      - name: Run API integration tests
+        run: dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-build --configuration Release
 
-      - name: Run API tests
-        run: dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-restore --configuration Release --logger "trx;LogFileName=api-tests.trx"
+      - name: Install Playwright Chromium
+        shell: pwsh
+        run: |
+          & "tests/U1.Business.BrowserTests/bin/Release/net10.0/playwright.ps1" install chromium
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright Chromium installation failed."
+          }
+
+      - name: Run browser behavior tests
+        run: dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release
