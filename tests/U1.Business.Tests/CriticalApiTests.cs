@@ -40,18 +40,23 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
     public async Task ResetCheckoutState()
     {
-        using var db = new SqlConnection(ConnectionString);
-        await db.OpenAsync();
-        await db.ExecuteAsync("""
-            DELETE FROM OrderItems;
-            DELETE FROM Orders;
-            DELETE FROM CartItems WHERE CartId IN (
-                SELECT c.Id FROM Carts c JOIN Users u ON u.Id=c.UserId WHERE u.Email LIKE 'ci-%@example.test'
-            );
-            DELETE FROM Carts WHERE UserId IN (SELECT Id FROM Users WHERE Email LIKE 'ci-%@example.test');
-            DELETE FROM Users WHERE Email LIKE 'ci-%@example.test';
-            UPDATE Products SET Stock=24 WHERE Code='DG-001';
-            """);
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+
+        await db.OrderItems.ExecuteDeleteAsync();
+        await db.Orders.ExecuteDeleteAsync();
+
+        var testUsers = db.Users.Where(u => EF.Functions.Like(u.Email, "ci-%@example.test"));
+        var testUserIds = testUsers.Select(u => u.Id);
+        var testCarts = db.Carts.Where(c => testUserIds.Contains(c.UserId));
+        var testCartIds = testCarts.Select(c => c.Id);
+
+        await db.CartItems.Where(ci => testCartIds.Contains(ci.CartId)).ExecuteDeleteAsync();
+        await testCarts.ExecuteDeleteAsync();
+        await testUsers.ExecuteDeleteAsync();
+        await db.Products
+            .Where(p => p.Code == "DG-001")
+            .ExecuteUpdateAsync(setters => setters.SetProperty(p => p.Stock, 24));
     }
 }
 
