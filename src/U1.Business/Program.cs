@@ -48,7 +48,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             .Select(x => new { x.IsActive, x.AuthVersion })
             .SingleOrDefaultAsync();
 
-        if (u is null || !u.IsActive || u.AuthVersion.ToString() != c.Principal.FindFirstValue("version"))
+        if (u is null || !u.IsActive || u.AuthVersion.ToString() != c.Principal!.FindFirstValue("version"))
             c.RejectPrincipal();
     };
 });
