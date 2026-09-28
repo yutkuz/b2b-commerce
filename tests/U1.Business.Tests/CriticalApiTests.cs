@@ -63,6 +63,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     }
 }
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ApiTestCollection
+{
+    public const string Name = "API integration tests";
+}
+
+[Collection(ApiTestCollection.Name)]
 public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
@@ -338,6 +345,7 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
         factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
 }
 
+[Collection(ApiTestCollection.Name)]
 public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
@@ -464,6 +472,7 @@ public sealed class CheckoutConcurrencyTests(ApiFactory factory) : IClassFixture
     }
 }
 
+[Collection(ApiTestCollection.Name)]
 public sealed class DatabaseApplicationLockTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
@@ -551,6 +560,7 @@ public sealed class DatabaseApplicationLockTests(ApiFactory factory) : IClassFix
     }
 }
 
+[Collection(ApiTestCollection.Name)]
 public sealed class UserConcurrencyTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
