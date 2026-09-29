@@ -201,7 +201,7 @@ pwsh -File tests/U1.Business.BrowserTests/bin/Release/net10.0/playwright.ps1 ins
 dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release
 ```
 
-Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama derlemesinde uyarıları hata sayar. Testler benzersiz veritabanları oluşturur; otomatik veritabanı temizliği henüz eklenmemiştir.
+Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama derlemesinde uyarıları hata sayar. Testler benzersiz veritabanları oluşturur ve test uygulaması kapandıktan sonra yalnız kendi oluşturdukları tam veritabanı adını otomatik siler. Başarısız tarayıcı başlangıcında da aynı cleanup çalışır. İnceleme için veritabanını korumak isterseniz testten önce PowerShell'de `$env:U1_KEEP_TEST_DATABASES='1'` ayarlayın; işiniz bitince `Remove-Item Env:U1_KEEP_TEST_DATABASES` ile kaldırın. Cleanup hiçbir zaman prefix'e göre toplu veritabanı silmez.
 
 GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test projelerinin Release derlemesi, JavaScript sözdizimi kontrolü, benzersiz LocalDB üzerinde API integration testleri ve Playwright Chromium ile tarayıcı davranış testlerini çalıştırır.
 

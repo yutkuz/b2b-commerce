@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using U1.Business.Data;
+using U1.Business.Testing;
 using Xunit;
 
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
@@ -39,6 +40,25 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
                 ["DatabaseLocks:OrderTimeoutMilliseconds"] = "250"
             });
         });
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await base.DisposeAsync();
+        }
+        finally
+        {
+            await TestDatabaseLifecycle.DropAsync(DatabaseName, "U1Business_CI_");
+            if (string.Equals(
+                    Environment.GetEnvironmentVariable("U1_TEST_DATABASE"),
+                    DatabaseName,
+                    StringComparison.Ordinal))
+            {
+                Environment.SetEnvironmentVariable("U1_TEST_DATABASE", null);
+            }
+        }
     }
 
     public async Task ResetCheckoutState()

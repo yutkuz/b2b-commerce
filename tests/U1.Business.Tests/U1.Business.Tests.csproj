@@ -24,4 +24,8 @@
     <ProjectReference Include="../../src/U1.Business/U1.Business.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../TestDatabaseLifecycle.cs" Link="TestDatabaseLifecycle.cs" />
+  </ItemGroup>
+
 </Project>

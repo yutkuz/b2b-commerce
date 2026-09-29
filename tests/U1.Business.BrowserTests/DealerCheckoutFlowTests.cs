@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Playwright;
 using Microsoft.Playwright.Xunit.v3;
+using U1.Business.Testing;
 
 namespace U1.Business.BrowserTests;
 
@@ -132,14 +133,17 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
 {
     private readonly Process process;
     private readonly ConcurrentQueue<string> output;
+    private readonly string databaseName;
 
     private BrowserTestApplication(
         Process process,
         ConcurrentQueue<string> output,
-        string baseUrl)
+        string baseUrl,
+        string databaseName)
     {
         this.process = process;
         this.output = output;
+        this.databaseName = databaseName;
         BaseUrl = baseUrl;
     }
 
@@ -206,7 +210,7 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        var application = new BrowserTestApplication(process, output, baseUrl);
+        var application = new BrowserTestApplication(process, output, baseUrl, databaseName);
 
         try
         {
@@ -262,13 +266,25 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (!process.HasExited)
+        try
         {
-            process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
         }
-
-        process.Dispose();
+        finally
+        {
+            try
+            {
+                process.Dispose();
+            }
+            finally
+            {
+                await TestDatabaseLifecycle.DropAsync(databaseName, "U1Business_E2E_");
+            }
+        }
     }
 
     private static int ReserveTcpPort()
