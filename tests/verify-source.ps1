@@ -41,10 +41,7 @@ foreach ($file in $jsFiles) {
         $version = $match.Groups["version"].Value
 
         if ($importVersions.ContainsKey($target) -and $importVersions[$target] -ne $version) {
-            $violations.Add(
-                "$($file.FullName): inconsistent cache version for $target "
-                + "($($importVersions[$target]) vs $version)"
-            )
+            $violations.Add("$($file.FullName): inconsistent cache version for $target ($($importVersions[$target]) vs $version)")
         }
         else {
             $importVersions[$target] = $version
