@@ -43,6 +43,7 @@ let csrfToken = '';
 let unauthorizedHandler = () => {};
 let sameRouteHandler = () => {};
 let modalReturnFocus = null;
+let pendingModalReturnFocus = null;
 
 export function setUnauthorizedHandler(handler) {
     unauthorizedHandler = handler;
@@ -276,6 +277,13 @@ export function formData(form) {
     return Object.fromEntries(new FormData(form));
 }
 
+export function rememberModalTrigger(element) {
+    pendingModalReturnFocus =
+        element instanceof HTMLElement && element.isConnected
+            ? element
+            : null;
+}
+
 export function modal(title, body) {
     const dialog = document.querySelector('#dialog');
     dialog.innerHTML = `<div class="dialog-head">
@@ -286,9 +294,11 @@ export function modal(title, body) {
 
     if (!dialog.open) {
         modalReturnFocus =
-            document.activeElement instanceof HTMLElement
+            pendingModalReturnFocus ||
+            (document.activeElement instanceof HTMLElement
                 ? document.activeElement
-                : null;
+                : null);
+        pendingModalReturnFocus = null;
         dialog.showModal();
     }
 }
@@ -302,7 +312,11 @@ export function restoreModalFocus() {
     modalReturnFocus = null;
 
     if (target?.isConnected) {
-        target.focus();
+        requestAnimationFrame(() => {
+            if (target.isConnected) {
+                target.focus();
+            }
+        });
     }
 }
 

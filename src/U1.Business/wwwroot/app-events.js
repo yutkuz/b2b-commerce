@@ -5,6 +5,7 @@ import {
     formData,
     go,
     refreshCart,
+    rememberModalTrigger,
     resetCsrf,
     restoreModalFocus,
     state,
@@ -100,10 +101,12 @@ async function handleActionClick(event) {
                 return;
 
             case 'product':
+                rememberModalTrigger(element);
                 await showProduct(id);
                 return;
 
             case 'order':
+                rememberModalTrigger(element);
                 await showOrder(id);
                 return;
 
@@ -188,6 +191,7 @@ async function handleActionClick(event) {
                 return;
 
             case 'checkout':
+                rememberModalTrigger(element);
                 await openCheckout(
                     document.querySelector('#order-note')?.value ?? draftNote(),
                     { renderPage },
@@ -195,6 +199,7 @@ async function handleActionClick(event) {
                 return;
 
             default:
+                rememberModalTrigger(element);
                 await adminAction(action, element, { render: renderPage });
         }
     } catch (error) {
