@@ -409,6 +409,11 @@ function handleNativeMenuEscape(event) {
     });
 }
 
+function handleDialogCancel(event) {
+    event.preventDefault();
+    closeModal();
+}
+
 function handleDialogBackdropClick(event) {
     if (event.target !== event.currentTarget) {
         return;
@@ -441,6 +446,7 @@ export function bindAppEvents({ render, resetFilters, catalogRouteNames }) {
     document.addEventListener('click', closeNativeMenus);
 
     const dialog = document.querySelector('#dialog');
+    dialog.addEventListener('cancel', handleDialogCancel);
     dialog.addEventListener('click', handleDialogBackdropClick);
     dialog.addEventListener('close', () => {
         onCheckoutDialogClosed();

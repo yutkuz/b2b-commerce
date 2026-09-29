@@ -336,6 +336,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
 
             var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" });
             await productRow.Locator("[data-action='add']").ClickAsync();
+            await Expect(Page.Locator("[data-cart-count]").First).ToHaveTextAsync("1");
             await Page.GotoAsync($"{application.BaseUrl}/#cart");
 
             await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Sepetim" }))
