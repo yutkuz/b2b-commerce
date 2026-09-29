@@ -4,7 +4,15 @@ import {
   products,
   productForm,
   submitProduct,
-} from "./admin/products.js?v=20260929a";
+  archiveProduct,
+  restoreProduct,
+} from "./admin/products.js?v=20260929b";
+import {
+  categoryList,
+  submitCategoryCreate,
+  submitCategoryUpdate,
+  submitCategoryMerge,
+} from "./admin/categories.js?v=20260929b";
 import { history } from "./admin/history.js?v=20260929a";
 import {
   userList,
@@ -28,6 +36,8 @@ export async function renderAdmin() {
       return products();
     case "admin-product":
       return productForm();
+    case "admin-categories":
+      return categoryList();
     case "admin-users":
       return userList();
     case "admin-orders":
@@ -43,6 +53,8 @@ export async function renderAdmin() {
 
 export async function adminAction(action, element, { render }) {
   if (action === "reload-product") return render();
+  if (action === "archive-product") return archiveProduct(element, render);
+  if (action === "restore-product") return restoreProduct(element, render);
   if (action === "reload-grid") return render();
   if (action === "reload-banner") return reloadBannerEditor(element, render);
   if (action === "user-edit") return showUserEditor(element);
@@ -65,6 +77,9 @@ export async function adminSubmit(kind, form, data, { render }) {
     return;
   }
   if (kind === "product") return submitProduct(form, data);
+  if (kind === "category-create") return submitCategoryCreate(data, render);
+  if (kind === "category-update") return submitCategoryUpdate(form, data, render);
+  if (kind === "category-merge") return submitCategoryMerge(form, data, render);
   if (kind === "user") return submitUser(form, data, render);
   if (kind === "grid") return submitGrid(form, render);
   if (kind === "banner") return submitBanner(form, data, render);
