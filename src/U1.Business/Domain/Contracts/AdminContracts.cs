@@ -49,3 +49,37 @@ public sealed class BannerUpdateInput : BannerInput
 {
     public byte[] RowVersion { get; set; } = [];
 }
+
+
+public class CategoryInput
+{
+    [Required, StringLength(80)]
+    public string Name { get; set; } = "";
+}
+
+public sealed class CategoryUpdateInput : CategoryInput
+{
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class CategoryMergeInput
+{
+    [Range(1, int.MaxValue)]
+    public int TargetCategoryId { get; set; }
+
+    public byte[] SourceRowVersion { get; set; } = [];
+    public byte[] TargetRowVersion { get; set; } = [];
+}
+
+public sealed class ProductArchiveInput
+{
+    public byte[] RowVersion { get; set; } = [];
+
+    [Required, StringLength(300)]
+    public string Reason { get; set; } = "";
+}
+
+public sealed class ProductRestoreInput
+{
+    public byte[] RowVersion { get; set; } = [];
+}
