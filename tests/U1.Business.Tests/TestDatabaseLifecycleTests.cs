@@ -27,8 +27,8 @@ public sealed class TestDatabaseLifecycleTests
         }
         finally
         {
-            await TestDatabaseLifecycle.DropAsync(first, "U1Business_CI_");
-            await TestDatabaseLifecycle.DropAsync(second, "U1Business_CI_");
+            await TestDatabaseLifecycle.DropUncancellableAsync(first, "U1Business_CI_");
+            await TestDatabaseLifecycle.DropUncancellableAsync(second, "U1Business_CI_");
         }
     }
 

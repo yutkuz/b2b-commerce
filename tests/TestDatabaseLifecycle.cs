@@ -9,7 +9,7 @@ internal static class TestDatabaseLifecycle
     public static bool PreserveRequested => IsTruthy(
         Environment.GetEnvironmentVariable(PreserveEnvironmentVariable));
 
-    public static Task DropAsync(string databaseName, string expectedPrefix) =>
+    public static Task DropUncancellableAsync(string databaseName, string expectedPrefix) =>
         DropAsync(databaseName, expectedPrefix, CancellationToken.None);
 
     public static async Task DropAsync(

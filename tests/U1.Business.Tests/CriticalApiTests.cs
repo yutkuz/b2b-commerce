@@ -50,7 +50,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         }
         finally
         {
-            await TestDatabaseLifecycle.DropAsync(DatabaseName, "U1Business_CI_");
+            await TestDatabaseLifecycle.DropUncancellableAsync(DatabaseName, "U1Business_CI_");
             if (string.Equals(
                     Environment.GetEnvironmentVariable("U1_TEST_DATABASE"),
                     DatabaseName,

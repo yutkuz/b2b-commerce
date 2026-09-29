@@ -282,7 +282,7 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
             }
             finally
             {
-                await TestDatabaseLifecycle.DropAsync(databaseName, "U1Business_E2E_");
+                await TestDatabaseLifecycle.DropUncancellableAsync(databaseName, "U1Business_E2E_");
             }
         }
     }
