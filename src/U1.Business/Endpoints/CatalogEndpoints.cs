@@ -21,12 +21,13 @@ public static class CatalogEndpoints
                     {
                         c.Id,
                         c.Name,
-                        ProductCount = db.Products.Count(p => p.CategoryId == c.Id)
+                        ProductCount = db.Products.Count(p => p.CategoryId == c.Id && !p.IsArchived)
                     })
                     .ToListAsync();
 
                 var brands = await db.Products
                     .AsNoTracking()
+                    .Where(p => !p.IsArchived)
                     .Select(p => p.Brand)
                     .Distinct()
                     .OrderBy(x => x)
@@ -69,6 +70,7 @@ public static class CatalogEndpoints
                 var query =
                     from p in db.Products.AsNoTracking()
                     join c in db.Categories.AsNoTracking() on p.CategoryId equals c.Id
+                    where !p.IsArchived
                     select new { Product = p, Category = c.Name };
 
                 if (q.Length > 0)
@@ -156,7 +158,7 @@ public static class CatalogEndpoints
                 var product = await (
                     from p in db.Products.AsNoTracking()
                     join c in db.Categories.AsNoTracking() on p.CategoryId equals c.Id
-                    where p.Id == id
+                    where p.Id == id && !p.IsArchived
                     select new
                     {
                         p.Id,

@@ -106,6 +106,7 @@ public sealed class OrderService(
             throw CartChanged();
 
         await LoadProductSnapshots(db, cartLines);
+        EnsureProductsAreSellable(cartLines);
 
         if (!MatchesApprovedCart(cartLines, approvedLines))
             throw CartChanged();
@@ -251,6 +252,20 @@ public sealed class OrderService(
             approvedByProduct.TryGetValue(line.ProductId, out var approved) &&
             approved.Quantity == line.Quantity &&
             approved.UnitPrice == line.Product.Price);
+    }
+
+    private static void EnsureProductsAreSellable(IEnumerable<CartLine> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (!line.Product.IsArchived)
+                continue;
+
+            throw new BusinessException(
+                $"{line.Product.Name} artık satışta değil. Ürünü sepetten çıkarıp güncel sepeti yeniden onaylayın.",
+                409,
+                "PRODUCT_ARCHIVED");
+        }
     }
 
     private static void EnsureStockIsAvailable(IEnumerable<CartLine> lines)
