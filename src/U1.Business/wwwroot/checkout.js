@@ -186,6 +186,16 @@ export async function openCheckout(
     await refreshCart();
 
     const pending = changed ? null : storedApproval();
+    const unavailable = state.cart.items.filter(product => product.isArchived);
+
+    if (unavailable.length && !pending) {
+        closeModal();
+        if (renderPage) {
+            await renderPage();
+        }
+        toast('Sepetinizde artık satışta olmayan ürün var. Bu ürünü sepetten çıkarın.', true);
+        return;
+    }
 
     if (!state.cart.items.length && !pending) {
         closeModal();
@@ -208,6 +218,7 @@ export async function renderCartPage() {
     await refreshCart();
 
     const cart = state.cart;
+    const unavailable = cart.items.filter(product => product.isArchived);
 
     if (!cart.items.length) {
         const action = storedApproval()
@@ -229,18 +240,22 @@ export async function renderCartPage() {
                 <div class="cart-product">
                     ${thumb(product)}
                     <div>
-                        <button class="product-name" data-action="product" data-id="${product.id}">
-                            ${esc(product.name)}
-                        </button>
+                        ${product.isArchived
+                            ? `<span class="product-name">${esc(product.name)}</span>`
+                            : `<button class="product-name" data-action="product" data-id="${product.id}">
+                                ${esc(product.name)}
+                              </button>`}
                         <span class="product-meta">${esc(product.code)}</span>
-                        ${product.quantity > product.stock
-                            ? `<span class="stock empty">Stok yetersiz: ${product.stock}</span>`
-                            : ''}
+                        ${product.isArchived
+                            ? `<span class="stock empty">Artık satışta değil · Sepetten çıkarın</span>`
+                            : product.quantity > product.stock
+                                ? `<span class="stock empty">Stok yetersiz: ${product.stock}</span>`
+                                : ''}
                     </div>
                 </div>
             </td>
             <td class="money">${money(product.price)}</td>
-            <td>${quantityControl(product, 'cart')}</td>
+            <td>${product.isArchived ? `${product.quantity} adet` : quantityControl(product, 'cart')}</td>
             <td class="money">${money(product.total)}</td>
             <td>
                 <button
@@ -260,6 +275,9 @@ export async function renderCartPage() {
         `<a class="button" href="#catalog">Alışverişe devam et ${icon('arrow')}</a>`,
     ) + `<div class="cart-layout">
         <section class="panel">
+            ${unavailable.length
+                ? `<div class="notice error" role="alert">Sepetinizde artık satışta olmayan ürün var. Sipariş vermeden önce kırmızı uyarılı ürünü sepetten çıkarın.</div>`
+                : ''}
             <div class="table-scroll">
                 <table class="data-table">
                     <thead>
@@ -293,8 +311,8 @@ export async function renderCartPage() {
             <div class="summary-row"><span>Ürün adedi</span><b>${cart.count}</b></div>
             <div class="summary-row"><span>Ara toplam</span><b>${money(cart.total)}</b></div>
             <div class="summary-row summary-total"><span>Toplam</span><span>${money(cart.total)}</span></div>
-            <button class="button primary" data-action="checkout">
-                Siparişi gözden geçir ${icon('arrow')}
+            <button class="button primary" data-action="checkout" ${unavailable.length ? 'disabled' : ''}>
+                ${unavailable.length ? 'Satıştan kaldırılan ürünü çıkarın' : `Siparişi gözden geçir ${icon('arrow')}`}
             </button>
             <p class="summary-note">
                 Siparişiniz bayi yöneticisinin onayına gönderilir. Bu aşamada online ödeme alınmaz.
