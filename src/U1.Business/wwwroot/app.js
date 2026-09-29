@@ -1,4 +1,4 @@
-import { renderAdmin } from './admin.js?v=20260929a';
+import { renderAdmin } from './admin.js?v=20260929b';
 import {
     portalRoutes,
     publicRoutes,
@@ -6,7 +6,7 @@ import {
     portalFooter,
     publicShell,
     renderPortalPage,
-} from './portal.js?v=20260929a';
+} from './portal.js?v=20260929b';
 import {
     api,
     brand,
@@ -23,7 +23,7 @@ import { renderCatalogPage } from './catalog.js?v=20260928a';
 import {
     clearCheckoutSession,
     renderCartPage,
-} from './checkout.js?v=20260928a';
+} from './checkout.js?v=20260929b';
 import { bindAppEvents } from './app-events.js?v=20260929a';
 import { renderOrdersPage } from './orders.js?v=20260928a';
 
@@ -35,6 +35,7 @@ const ROUTES = {
     admin: ['Genel bakış', 'chart'],
     'admin-products': ['Ürün yönetimi', 'grid'],
     'admin-product': ['Ürün bilgileri', 'grid'],
+    'admin-categories': ['Kategori yönetimi', 'grid'],
     'admin-users': ['Bayiler', 'users'],
     'admin-orders': ['Sipariş yönetimi', 'box'],
     'admin-grid': ['Katalog düzeni', 'sliders'],
