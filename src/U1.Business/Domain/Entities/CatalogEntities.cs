@@ -6,6 +6,7 @@ public sealed class Category
 {
     public int Id { get; set; }
     public string Name { get; set; } = "";
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class Product
@@ -24,6 +25,10 @@ public sealed class Product
     public decimal Price { get; set; }
     public int CategoryId { get; set; }
     public DateTime CreatedAt { get; set; }
+    public bool IsArchived { get; set; }
+    public DateTime? ArchivedAt { get; set; }
+    public int? ArchivedByUserId { get; set; }
+    public string ArchiveReason { get; set; } = "";
     public byte[] RowVersion { get; set; } = [];
 }
 
