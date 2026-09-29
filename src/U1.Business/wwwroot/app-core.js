@@ -312,11 +312,11 @@ export function restoreModalFocus() {
     modalReturnFocus = null;
 
     if (target?.isConnected) {
-        requestAnimationFrame(() => {
+        setTimeout(() => {
             if (target.isConnected) {
-                target.focus();
+                target.focus({ preventScroll: true });
             }
-        });
+        }, 0);
     }
 }
 

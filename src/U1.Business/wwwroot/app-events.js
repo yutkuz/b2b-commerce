@@ -417,6 +417,7 @@ function handleNativeMenuEscape(event) {
 function handleDialogCancel(event) {
     event.preventDefault();
     closeModal();
+    restoreModalFocus();
 }
 
 function handleDialogBackdropClick(event) {
