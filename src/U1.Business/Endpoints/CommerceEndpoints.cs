@@ -31,8 +31,12 @@ public static class CommerceEndpoints
                         p.ImageUrl,
                         p.Price,
                         p.Stock,
+                        p.IsArchived,
                         ci.Quantity,
-                        Total = p.Price * ci.Quantity
+                        UnavailableMessage = p.IsArchived
+                            ? "Bu ürün artık satışta değil. Sepetten çıkarın."
+                            : null,
+                        Total = p.IsArchived ? 0m : p.Price * ci.Quantity
                     }).ToListAsync();
 
                 return new
@@ -159,10 +163,10 @@ public static class CommerceEndpoints
             .SingleOrDefaultAsync()
             ?? throw new BusinessException("Sepet bulunamadı.", 404);
 
-        var stock = await db.Products
+        var product = await db.Products
             .AsNoTracking()
             .Where(x => x.Id == input.ProductId)
-            .Select(x => (int?)x.Stock)
+            .Select(x => new { x.Stock, x.IsArchived })
             .SingleOrDefaultAsync()
             ?? throw new BusinessException("Ürün bulunamadı.", 404);
 
@@ -178,9 +182,16 @@ public static class CommerceEndpoints
                 "QUANTITY_LIMIT"
             );
 
-        if (quantity > stock)
+        if (quantity > 0 && product.IsArchived)
             throw new BusinessException(
-                $"Yeterli stok yok. Mevcut stok: {stock}. Sepetinizde: {current}.",
+                "Bu ürün artık satışta değil. Sepetten çıkarın.",
+                409,
+                "PRODUCT_ARCHIVED"
+            );
+
+        if (quantity > product.Stock)
+            throw new BusinessException(
+                $"Yeterli stok yok. Mevcut stok: {product.Stock}. Sepetinizde: {current}.",
                 409
             );
 
