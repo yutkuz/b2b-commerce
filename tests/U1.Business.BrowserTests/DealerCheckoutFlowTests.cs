@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 using Microsoft.Playwright.Xunit.v3;
+using U1.Business.Services;
 using U1.Business.Testing;
 
 namespace U1.Business.BrowserTests;
@@ -21,13 +23,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
         await RunWithDiagnostics(application, async () =>
         {
             await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
-            await Page.GotoAsync($"{application.BaseUrl}/#catalog");
-            await Page.GetByLabel("Ürün ara").FillAsync("DG-001");
-
-            var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" }).First;
-            await Expect(productRow).ToBeVisibleAsync();
-            await productRow.Locator("[data-action='add']").ClickAsync();
-            await Expect(Page.Locator("[data-cart-count]").First).ToHaveTextAsync("1");
+            await AddProductAsync(application, "DG-001");
 
             var requestIds = new List<Guid>();
             var loseFirstResponse = true;
@@ -61,8 +57,13 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await Page.GetByRole(AriaRole.Dialog)
                 .GetByRole(AriaRole.Button, new() { Name = "Siparişi oluştur" })
                 .ClickAsync();
-            await Expect(Page.GetByRole(AriaRole.Dialog)
-                .GetByRole(AriaRole.Button, new() { Name = "Önceki siparişi sorgula" }))
+
+            var pendingDialog = Page.GetByRole(AriaRole.Dialog);
+            await Expect(pendingDialog).ToContainTextAsync(
+                "Önceki sipariş isteğinin sonucu bilinmiyor.");
+            await Expect(pendingDialog.GetByRole(
+                AriaRole.Button,
+                new() { Name = "Önceki siparişi sorgula" }))
                 .ToBeVisibleAsync();
 
             await Page.ReloadAsync();
@@ -76,6 +77,10 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await Expect(Page).ToHaveURLAsync(new Regex("#orders$"));
             Assert.Equal(2, requestIds.Count);
             Assert.Equal(requestIds[0], requestIds[1]);
+
+            var orderRow = Page.Locator("#page .data-table tbody tr").First;
+            await Expect(orderRow).ToContainTextAsync("24.900,00");
+            await Expect(orderRow).ToContainTextAsync("Bekliyor");
             await Expect(Page.Locator("#page .data-table tbody tr")).ToHaveCountAsync(1);
         });
     }
@@ -89,16 +94,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
         await RunWithDiagnostics(application, async () =>
         {
             await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
-            await Page.GotoAsync($"{application.BaseUrl}/#catalog");
-
-            var search = Page.GetByLabel("Ürün ara");
-            await Expect(search).ToBeVisibleAsync();
-            await search.FillAsync("DG-001");
-
-            var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" }).First;
-            await Expect(productRow).ToBeVisibleAsync();
-            await productRow.Locator("[data-action='add']").ClickAsync();
-            await Expect(Page.Locator("[data-cart-count]").First).ToHaveTextAsync("1");
+            await AddProductAsync(application, "DG-001");
 
             await Page.GotoAsync($"{application.BaseUrl}/#cart");
             await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Sepetim" }))
@@ -115,7 +111,161 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await Expect(Page).ToHaveURLAsync(new Regex("#orders$"));
             await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Siparişlerim" }))
                 .ToBeVisibleAsync();
-            await Expect(Page.Locator("#page .data-table tbody")).ToContainTextAsync("U1-");
+
+            var row = Page.Locator("#page .data-table tbody tr").First;
+            await Expect(row).ToContainTextAsync("U1-");
+            await Expect(row).ToContainTextAsync("24.900,00");
+            await Expect(row).ToContainTextAsync("Bekliyor");
+        });
+    }
+
+    [Fact]
+    public async Task Admin_approval_and_rejection_are_visible_to_the_dealer()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await AddProductAsync(application, "DG-001");
+            await Page.GotoAsync($"{application.BaseUrl}/#cart");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Siparişi gözden geçir" })
+                .ClickAsync();
+            await Page.GetByRole(AriaRole.Dialog)
+                .GetByRole(AriaRole.Button, new() { Name = "Siparişi oluştur" })
+                .ClickAsync();
+
+            var dealerRow = Page.Locator("#page .data-table tbody tr").First;
+            var numberButton = dealerRow.Locator("[data-action='order']").First;
+            var orderNumber = (await numberButton.InnerTextAsync()).Trim();
+            Assert.StartsWith("U1-", orderNumber);
+            await Expect(dealerRow).ToContainTextAsync("24.900,00");
+
+            await LogoutAsync();
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-orders");
+
+            var adminRow = Page.Locator("tbody tr").Filter(new() { HasText = orderNumber });
+            await Expect(adminRow).ToContainTextAsync("Bekliyor");
+            await adminRow.GetByRole(AriaRole.Button, new() { Name = orderNumber }).ClickAsync();
+
+            var dialog = Page.GetByRole(AriaRole.Dialog);
+            await dialog.GetByLabel("Sipariş durumu").SelectOptionAsync("Onaylandı");
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Durumu güncelle" })
+                .ClickAsync();
+            await Expect(Page.Locator("tbody tr").Filter(new() { HasText = orderNumber }))
+                .ToContainTextAsync("Onaylandı");
+
+            await LogoutAsync();
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#orders");
+            dealerRow = Page.Locator("tbody tr").Filter(new() { HasText = orderNumber });
+            await Expect(dealerRow).ToContainTextAsync("24.900,00");
+            await Expect(dealerRow).ToContainTextAsync("Onaylandı");
+
+            await LogoutAsync();
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-orders");
+            adminRow = Page.Locator("tbody tr").Filter(new() { HasText = orderNumber });
+            await adminRow.GetByRole(AriaRole.Button, new() { Name = orderNumber }).ClickAsync();
+            dialog = Page.GetByRole(AriaRole.Dialog);
+            await dialog.GetByLabel("Sipariş durumu").SelectOptionAsync("Reddedildi");
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Durumu güncelle" })
+                .ClickAsync();
+
+            await LogoutAsync();
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#orders");
+            dealerRow = Page.Locator("tbody tr").Filter(new() { HasText = orderNumber });
+            await Expect(dealerRow).ToContainTextAsync("24.900,00");
+            await Expect(dealerRow).ToContainTextAsync("Reddedildi");
+        });
+    }
+
+    [Fact]
+    public async Task Stale_admin_product_form_preserves_input_and_offers_reload()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-products");
+
+            var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" });
+            await productRow.GetByRole(AriaRole.Link, new() { Name = "Düzenle" }).ClickAsync();
+            await Expect(Page).ToHaveURLAsync(new Regex("#admin-product\?id="));
+
+            var description = Page.Locator("textarea[name='description']");
+            var staleDraft = "Tarayıcıda korunacak stale form " + Guid.NewGuid().ToString("N")[..8];
+            await description.FillAsync(staleDraft);
+
+            using var api = await LoginApiAsync(
+                application,
+                "admin@u1.local",
+                "U1Admin!2026");
+            var product = await GetProductAsync(api, "DG-001");
+            var remoteDescription = "Başka yönetici güncellemesi " + Guid.NewGuid().ToString("N")[..8];
+            await UpdateProductAsync(api, product, description: remoteDescription);
+
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Ürünü kaydet" }).ClickAsync();
+
+            var conflict = Page.Locator(".product-conflict");
+            await Expect(conflict).ToContainTextAsync("Ürün başka bir işlemde değişti.");
+            await Expect(description).ToHaveValueAsync(staleDraft);
+
+            var reload = conflict.GetByRole(AriaRole.Button, new() { Name = "Yeniden yükle" });
+            await Expect(reload).ToBeFocusedAsync();
+            await reload.ClickAsync();
+            await Expect(description).ToHaveValueAsync(remoteDescription);
+        });
+    }
+
+    [Fact]
+    public async Task Price_change_requires_checkout_reapproval_with_the_new_total()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await AddProductAsync(application, "DG-001");
+            await Page.GotoAsync($"{application.BaseUrl}/#cart");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Siparişi gözden geçir" })
+                .ClickAsync();
+
+            var dialog = Page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog).ToContainTextAsync("24.900,00");
+
+            using var api = await LoginApiAsync(
+                application,
+                "admin@u1.local",
+                "U1Admin!2026");
+            var product = await GetProductAsync(api, "DG-001");
+            await UpdateProductAsync(api, product, price: 25_000m);
+
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Siparişi oluştur" })
+                .ClickAsync();
+
+            dialog = Page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByRole(
+                AriaRole.Heading,
+                new() { Name = "Sepet değişti, yeniden onaylayın" }))
+                .ToBeVisibleAsync();
+            await Expect(dialog).ToContainTextAsync("Önceki onay geçersiz.");
+            await Expect(dialog).ToContainTextAsync("24.900,00");
+            await Expect(dialog).ToContainTextAsync("25.000,00");
+
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Siparişi oluştur" })
+                .ClickAsync();
+
+            await Expect(Page).ToHaveURLAsync(new Regex("#orders$"));
+            var row = Page.Locator("#page .data-table tbody tr").First;
+            await Expect(row).ToContainTextAsync("25.000,00");
+            await Expect(row).ToContainTextAsync("Bekliyor");
         });
     }
 
@@ -163,7 +313,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
     }
 
     [Fact]
-    public async Task Mobile_catalog_keeps_required_columns_and_hides_optional_columns()
+    public async Task Mobile_catalog_and_cart_keep_the_required_purchase_controls()
     {
         await Page.SetViewportSizeAsync(390, 844);
         await using var application =
@@ -173,8 +323,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
         {
             await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
             await Page.GotoAsync($"{application.BaseUrl}/#catalog");
-            await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Ürün arama" }))
-                .ToBeVisibleAsync();
+            await Page.GetByLabel("Ürün ara").FillAsync("DG-001");
 
             await Expect(Page.Locator("th").Filter(new() { HasText = "Ürün adı" }))
                 .ToBeVisibleAsync();
@@ -184,6 +333,50 @@ public sealed class DealerCheckoutFlowTests : PageTest
                 .ToBeVisibleAsync();
             await Expect(Page.Locator("th").Filter(new() { HasText = "Ürün kodu" }))
                 .ToBeHiddenAsync();
+
+            var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" });
+            await productRow.Locator("[data-action='add']").ClickAsync();
+            await Page.GotoAsync($"{application.BaseUrl}/#cart");
+
+            await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Sepetim" }))
+                .ToBeVisibleAsync();
+            await Expect(Page.Locator("input[data-context='cart']")).ToBeVisibleAsync();
+            await Expect(Page.GetByRole(
+                AriaRole.Button,
+                new() { Name = "Siparişi gözden geçir" }))
+                .ToBeVisibleAsync();
+        });
+    }
+
+    [Fact]
+    public async Task Keyboard_opened_product_modal_returns_focus_after_escape()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#catalog");
+            await Page.GetByLabel("Ürün ara").FillAsync("DG-001");
+
+            var productButton = Page.Locator("tbody tr")
+                .Filter(new() { HasText = "DG-001" })
+                .Locator(".product-name")
+                .First;
+            await productButton.FocusAsync();
+            await Page.Keyboard.PressAsync("Enter");
+
+            var dialog = Page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(
+                AriaRole.Heading,
+                new() { Name = "Ürün detayları" }))
+                .ToBeVisibleAsync();
+
+            await Page.Keyboard.PressAsync("Escape");
+            await Expect(dialog).ToBeHiddenAsync();
+            await Expect(productButton).ToBeFocusedAsync();
         });
     }
 
@@ -220,6 +413,130 @@ public sealed class DealerCheckoutFlowTests : PageTest
         await Expect(Page).ToHaveURLAsync(new Regex("#home$"));
     }
 
+    private async Task LogoutAsync()
+    {
+        var menu = Page.Locator(".account-menu");
+        await menu.Locator("summary").ClickAsync();
+        await menu.GetByRole(AriaRole.Button, new() { Name = "Çıkış yap" }).ClickAsync();
+        await Expect(Page).ToHaveURLAsync(new Regex("#login$"));
+    }
+
+    private async Task AddProductAsync(
+        BrowserTestApplication application,
+        string code)
+    {
+        await Page.GotoAsync($"{application.BaseUrl}/#catalog");
+        await Page.GetByLabel("Ürün ara").FillAsync(code);
+        var productRow = Page.Locator("tbody tr").Filter(new() { HasText = code }).First;
+        await Expect(productRow).ToBeVisibleAsync();
+        await productRow.Locator("[data-action='add']").ClickAsync();
+        await Expect(Page.Locator("[data-cart-count]").First).ToHaveTextAsync("1");
+    }
+
+    private static async Task<ApiSession> LoginApiAsync(
+        BrowserTestApplication application,
+        string email,
+        string password)
+    {
+        var client = new HttpClient(new HttpClientHandler
+        {
+            CookieContainer = new CookieContainer(),
+            UseCookies = true
+        })
+        {
+            BaseAddress = new Uri(application.BaseUrl)
+        };
+
+        try
+        {
+            var csrf = await ReadCsrfAsync(client);
+            using var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+            {
+                Content = JsonContent.Create(new { email, password })
+            };
+            loginRequest.Headers.Add("X-CSRF-TOKEN", csrf);
+            using var login = await client.SendAsync(
+                loginRequest,
+                TestContext.Current.CancellationToken);
+            login.EnsureSuccessStatusCode();
+
+            return new ApiSession(client, await ReadCsrfAsync(client));
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<string> ReadCsrfAsync(HttpClient client)
+    {
+        var body = await client.GetFromJsonAsync<JsonElement>(
+            "/api/csrf",
+            TestContext.Current.CancellationToken);
+        return body.GetProperty("token").GetString()!;
+    }
+
+    private static async Task<JsonElement> GetProductAsync(
+        ApiSession session,
+        string code)
+    {
+        var list = await session.Client.GetFromJsonAsync<JsonElement>(
+            "/api/products?q=" + Uri.EscapeDataString(code),
+            TestContext.Current.CancellationToken);
+        var id = list.GetProperty("items")[0].GetProperty("id").GetInt32();
+        return await session.Client.GetFromJsonAsync<JsonElement>(
+            $"/api/products/{id}",
+            TestContext.Current.CancellationToken);
+    }
+
+    private static async Task UpdateProductAsync(
+        ApiSession session,
+        JsonElement product,
+        decimal? price = null,
+        string? description = null)
+    {
+        var id = product.GetProperty("id").GetInt32();
+        var response = await SendJsonAsync(
+            session,
+            HttpMethod.Put,
+            $"/api/admin/products/{id}",
+            new
+            {
+                code = product.GetProperty("code").GetString(),
+                name = product.GetProperty("name").GetString(),
+                description = description ?? product.GetProperty("description").GetString(),
+                brand = product.GetProperty("brand").GetString(),
+                manufacturerCode = product.GetProperty("manufacturerCode").GetString(),
+                specialCode1 = product.GetProperty("specialCode1").GetString(),
+                specialCode2 = product.GetProperty("specialCode2").GetString(),
+                imageUrl = product.GetProperty("imageUrl").GetString(),
+                stock = product.GetProperty("stock").GetInt32(),
+                criticalStock = product.GetProperty("criticalStock").GetInt32(),
+                price = price ?? product.GetProperty("price").GetDecimal(),
+                categoryId = product.GetProperty("categoryId").GetInt32(),
+                version = product.GetProperty("rowVersion").GetString()
+            });
+        using (response)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
+    private static Task<HttpResponseMessage> SendJsonAsync(
+        ApiSession session,
+        HttpMethod method,
+        string path,
+        object body)
+    {
+        var request = new HttpRequestMessage(method, path)
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("X-CSRF-TOKEN", session.Csrf);
+        return session.Client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
     private async Task RunWithDiagnostics(
         BrowserTestApplication application,
         Func<Task> body)
@@ -243,6 +560,14 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await application.CaptureFailureArtifactsAsync(Page, Context);
             throw;
         }
+    }
+
+    private sealed class ApiSession(HttpClient client, string csrf) : IDisposable
+    {
+        public HttpClient Client { get; } = client;
+        public string Csrf { get; } = csrf;
+
+        public void Dispose() => Client.Dispose();
     }
 }
 

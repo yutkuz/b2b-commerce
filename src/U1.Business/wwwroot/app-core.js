@@ -42,6 +42,7 @@ export const state = {
 let csrfToken = '';
 let unauthorizedHandler = () => {};
 let sameRouteHandler = () => {};
+let modalReturnFocus = null;
 
 export function setUnauthorizedHandler(handler) {
     unauthorizedHandler = handler;
@@ -284,12 +285,25 @@ export function modal(title, body) {
     <div class="dialog-body">${body}</div>`;
 
     if (!dialog.open) {
+        modalReturnFocus =
+            document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
         dialog.showModal();
     }
 }
 
 export function closeModal() {
     document.querySelector('#dialog').close();
+}
+
+export function restoreModalFocus() {
+    const target = modalReturnFocus;
+    modalReturnFocus = null;
+
+    if (target?.isConnected) {
+        target.focus();
+    }
 }
 
 export async function refreshCart() {

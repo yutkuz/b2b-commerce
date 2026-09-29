@@ -6,6 +6,7 @@ import {
     go,
     refreshCart,
     resetCsrf,
+    restoreModalFocus,
     state,
     toast,
 } from './app-core.js?v=20260928a';
@@ -441,5 +442,8 @@ export function bindAppEvents({ render, resetFilters, catalogRouteNames }) {
 
     const dialog = document.querySelector('#dialog');
     dialog.addEventListener('click', handleDialogBackdropClick);
-    dialog.addEventListener('close', onCheckoutDialogClosed);
+    dialog.addEventListener('close', () => {
+        onCheckoutDialogClosed();
+        restoreModalFocus();
+    });
 }
