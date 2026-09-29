@@ -196,14 +196,17 @@ Yerel doğrulama:
 
 ```powershell
 dotnet build U1.Business.sln --configuration Release
-dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-build --configuration Release
+New-Item -ItemType Directory -Force test-results/api, test-results/browser | Out-Null
+dotnet test tests/U1.Business.Tests/U1.Business.Tests.csproj --no-build --configuration Release -- --results-directory "$PWD/test-results/api" --report-xunit-trx --report-xunit-trx-filename api.trx
 pwsh -File tests/U1.Business.BrowserTests/bin/Release/net10.0/playwright.ps1 install chromium
-dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release
+$env:U1_TEST_ARTIFACTS = "$PWD/test-results/browser/artifacts"
+dotnet test tests/U1.Business.BrowserTests/U1.Business.BrowserTests.csproj --no-build --configuration Release -- --results-directory "$PWD/test-results/browser" --report-xunit-trx --report-xunit-trx-filename browser.trx
+Remove-Item Env:U1_TEST_ARTIFACTS -ErrorAction SilentlyContinue
 ```
 
-Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama derlemesinde uyarıları hata sayar. Testler benzersiz veritabanları oluşturur ve test uygulaması kapandıktan sonra yalnız kendi oluşturdukları tam veritabanı adını otomatik siler. Başarısız tarayıcı başlangıcında da aynı cleanup çalışır. İnceleme için veritabanını korumak isterseniz testten önce PowerShell'de `$env:U1_KEEP_TEST_DATABASES='1'` ayarlayın; işiniz bitince `Remove-Item Env:U1_KEEP_TEST_DATABASES` ile kaldırın. Cleanup hiçbir zaman prefix'e göre toplu veritabanı silmez.
+Tarayıcı testleri için PowerShell 7 (`pwsh`) ve Playwright'ın Chromium kurulumu gerekir; bunlar uygulamayı kullanmak için zorunlu değildir. CI uygulama ve test projelerinin derlemesinde uyarıları hata sayar. Testler benzersiz veritabanları oluşturur ve test uygulaması kapandıktan sonra yalnız kendi oluşturdukları tam veritabanı adını otomatik siler. Başarısız tarayıcı başlangıcında da aynı cleanup çalışır. İnceleme için veritabanını korumak isterseniz testten önce PowerShell'de `$env:U1_KEEP_TEST_DATABASES='1'` ayarlayın; işiniz bitince `Remove-Item Env:U1_KEEP_TEST_DATABASES` ile kaldırın. Cleanup hiçbir zaman prefix'e göre toplu veritabanı silmez.
 
-GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test projelerinin Release derlemesi, JavaScript sözdizimi kontrolü, benzersiz LocalDB üzerinde API integration testleri ve Playwright Chromium ile tarayıcı davranış testlerini çalıştırır.
+GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test projelerinin Release derlemesi, JavaScript sözdizimi kontrolü, benzersiz LocalDB üzerinde API integration testleri ve Playwright Chromium ile tarayıcı davranış testlerini çalıştırır. Her iki test projesi TRX raporu üretir; tarayıcı testi başarısız olursa screenshot ve Playwright trace, ayrıca test uygulamasının server log'u `test-diagnostics` artifact'ında saklanır.
 
 ### Doğrulanan kapsam
 

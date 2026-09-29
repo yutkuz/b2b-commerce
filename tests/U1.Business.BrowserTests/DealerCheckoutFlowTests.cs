@@ -15,7 +15,9 @@ public sealed class DealerCheckoutFlowTests : PageTest
     [Fact]
     public async Task Lost_checkout_response_keeps_the_same_request_id_after_reload()
     {
-        await using var application = await BrowserTestApplication.StartAsync();
+        await using var application = await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+        await RunWithDiagnostics(application, async () =>
+        {
         await Page.GotoAsync($"{application.BaseUrl}/#login");
         await Page.GetByLabel("E-posta adresi").FillAsync("bayi@u1.local");
         await Page.GetByLabel("Şifre").FillAsync("U1Bayi!2026");
@@ -71,12 +73,16 @@ public sealed class DealerCheckoutFlowTests : PageTest
         Assert.Equal(2, requestIds.Count);
         Assert.Equal(requestIds[0], requestIds[1]);
         await Expect(Page.Locator("#page .data-table tbody tr")).ToHaveCountAsync(1);
-    }
+    
+        });
+}
 
     [Fact]
     public async Task Dealer_can_login_add_product_to_cart_and_place_order()
     {
-        await using var application = await BrowserTestApplication.StartAsync();
+        await using var application = await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+        await RunWithDiagnostics(application, async () =>
+        {
 
         await Page.GotoAsync($"{application.BaseUrl}/#login");
 
@@ -126,7 +132,33 @@ public sealed class DealerCheckoutFlowTests : PageTest
             .ToBeVisibleAsync();
 
         await Expect(Page.Locator("#page .data-table tbody")).ToContainTextAsync("U1-");
+    
+        });
+}
+
+    private async Task RunWithDiagnostics(BrowserTestApplication application, Func<Task> body)
+    {
+        await Context.Tracing.StartAsync(new()
+        {
+            Screenshots = true,
+            ScreenSnapshots = true,
+            Snapshots = true,
+            Sources = true,
+            Title = "U1 Business browser test"
+        });
+
+        try
+        {
+            await body();
+            await Context.Tracing.StopAsync();
+        }
+        catch
+        {
+            await application.CaptureFailureArtifactsAsync(Page, Context);
+            throw;
+        }
     }
+
 }
 
 internal sealed class BrowserTestApplication : IAsyncDisposable
@@ -134,22 +166,28 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
     private readonly Process process;
     private readonly ConcurrentQueue<string> output;
     private readonly string databaseName;
+    private readonly string artifactDirectory;
+    private readonly string serverLogPath;
 
     private BrowserTestApplication(
         Process process,
         ConcurrentQueue<string> output,
         string baseUrl,
-        string databaseName)
+        string databaseName,
+        string artifactDirectory,
+        string serverLogPath)
     {
         this.process = process;
         this.output = output;
         this.databaseName = databaseName;
+        this.artifactDirectory = artifactDirectory;
+        this.serverLogPath = serverLogPath;
         BaseUrl = baseUrl;
     }
 
     public string BaseUrl { get; }
 
-    public static async Task<BrowserTestApplication> StartAsync()
+    public static async Task<BrowserTestApplication> StartAsync(CancellationToken cancellationToken)
     {
         var repositoryRoot = FindRepositoryRoot();
         var applicationDirectory = Path.Combine(repositoryRoot, "src", "U1.Business");
@@ -169,6 +207,13 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
 
         var port = ReserveTcpPort();
         var baseUrl = $"http://127.0.0.1:{port}";
+        var artifactDirectory = Environment.GetEnvironmentVariable("U1_TEST_ARTIFACTS");
+        if (string.IsNullOrWhiteSpace(artifactDirectory))
+            artifactDirectory = Path.Combine(repositoryRoot, "TestResults", "browser-artifacts");
+        Directory.CreateDirectory(artifactDirectory);
+        var artifactId = Guid.NewGuid().ToString("N");
+        var serverLogPath = Path.Combine(artifactDirectory, $"server-{artifactId}.log");
+
         var databaseName = $"U1Business_E2E_{Guid.NewGuid():N}";
         var connectionString =
             $@"Server=(localdb)\MSSQLLocalDB;Database={databaseName};Integrated Security=true;TrustServerCertificate=true;Connect Timeout=30";
@@ -210,11 +255,11 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        var application = new BrowserTestApplication(process, output, baseUrl, databaseName);
+        var application = new BrowserTestApplication(process, output, baseUrl, databaseName, artifactDirectory, serverLogPath);
 
         try
         {
-            await application.WaitUntilReady();
+            await application.WaitUntilReady(cancellationToken);
             return application;
         }
         catch
@@ -224,7 +269,7 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
         }
     }
 
-    private async Task WaitUntilReady()
+    private async Task WaitUntilReady(CancellationToken cancellationToken)
     {
         using var client = new HttpClient
         {
@@ -241,23 +286,49 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
 
             try
             {
-                using var response = await client.GetAsync($"{BaseUrl}/api/test-environment");
+                using var response = await client.GetAsync($"{BaseUrl}/api/test-environment", cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
                     return;
             }
             catch (HttpRequestException)
             {
             }
-            catch (TaskCanceledException)
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
             }
 
-            await Task.Delay(500);
+            await Task.Delay(500, cancellationToken);
         }
 
         throw new TimeoutException(
             $"Tarayıcı test uygulaması 60 saniye içinde hazır olmadı.{Environment.NewLine}{RecentOutput()}");
     }
+
+
+    public async Task CaptureFailureArtifactsAsync(IPage page, IBrowserContext context)
+    {
+        Directory.CreateDirectory(artifactDirectory);
+        var suffix = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
+        var screenshotPath = Path.Combine(artifactDirectory, $"failure-{suffix}.png");
+        var tracePath = Path.Combine(artifactDirectory, $"trace-{suffix}.zip");
+
+        try
+        {
+            await page.ScreenshotAsync(new() { Path = screenshotPath, FullPage = true });
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            await context.Tracing.StopAsync(new() { Path = tracePath });
+        }
+        catch
+        {
+        }
+    }
+
 
     private string RecentOutput() =>
         string.Join(
@@ -271,13 +342,15 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
+                process.WaitForExit();
             }
         }
         finally
         {
             try
             {
+                Directory.CreateDirectory(artifactDirectory);
+                File.WriteAllLines(serverLogPath, output);
                 process.Dispose();
             }
             finally
