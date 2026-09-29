@@ -53,17 +53,17 @@ public sealed class SchemaUpgradeTests
 
             await database.Initialize(development: false);
             await AssertPreservedState(factory, passwordHash, cancellationToken);
-            Assert.Equal(5, await Scalar<int>(connection,
+            Assert.Equal(6, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.SchemaVersions", cancellationToken));
             Assert.Equal(1, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.DemoSetup WHERE Component = 'catalog'", cancellationToken));
 
             await Execute(connection,
-                "INSERT INTO dbo.SchemaVersions(Version) VALUES(6)", cancellationToken);
+                "INSERT INTO dbo.SchemaVersions(Version) VALUES(7)", cancellationToken);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => database.Initialize(development: false));
             Assert.Equal("Veritabanı şeması bu uygulamadan daha yeni.", error.Message);
-            Assert.Equal(6, await Scalar<int>(connection,
+            Assert.Equal(7, await Scalar<int>(connection,
                 "SELECT MAX(Version) FROM dbo.SchemaVersions", cancellationToken));
             await AssertPreservedState(factory, passwordHash, cancellationToken);
         }
@@ -89,6 +89,12 @@ public sealed class SchemaUpgradeTests
         Assert.Equal(7, product.Stock);
         Assert.Equal(12.50m, product.Price);
         Assert.Equal(8, product.RowVersion.Length);
+        Assert.False(product.IsArchived);
+        Assert.Null(product.ArchivedAt);
+        Assert.Null(product.ArchivedByUserId);
+        Assert.Equal("", product.ArchiveReason);
+        var category = await db.Categories.SingleAsync(x => x.Id == product.CategoryId, cancellationToken);
+        Assert.Equal(8, category.RowVersion.Length);
 
         var order = await db.Orders.SingleAsync(x => x.Number == "LEGACY-ORDER", cancellationToken);
         Assert.Equal(user.Id, order.UserId);
@@ -113,6 +119,7 @@ public sealed class SchemaUpgradeTests
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var user = db.Model.FindEntityType(typeof(User))!;
+        var category = db.Model.FindEntityType(typeof(Category))!;
         var product = db.Model.FindEntityType(typeof(Product))!;
         var order = db.Model.FindEntityType(typeof(Order))!;
         var orderItem = db.Model.FindEntityType(typeof(OrderItem))!;
@@ -129,6 +136,8 @@ public sealed class SchemaUpgradeTests
             product.FindProperty(nameof(Product.Name))!, 180, cancellationToken);
         await AssertColumn(connection, "Products", "Price", "decimal", 9, 18, 2,
             product.FindProperty(nameof(Product.Price))!, null, cancellationToken);
+        await AssertColumn(connection, "Products", "ArchiveReason", "nvarchar", 600, 0, 0,
+            product.FindProperty(nameof(Product.ArchiveReason))!, 300, cancellationToken);
         await AssertColumn(connection, "Orders", "Total", "decimal", 9, 18, 2,
             order.FindProperty(nameof(Order.Total))!, null, cancellationToken);
         await AssertColumn(connection, "OrderItems", "UnitPrice", "decimal", 9, 18, 2,
@@ -145,6 +154,12 @@ public sealed class SchemaUpgradeTests
         Assert.True(rowVersion.IsConcurrencyToken);
         Assert.Equal(ValueGenerated.OnAddOrUpdate, rowVersion.ValueGenerated);
 
+        await AssertRowVersion(
+            connection,
+            category,
+            "Categories",
+            nameof(Category.RowVersion),
+            cancellationToken);
         await AssertRowVersion(
             connection,
             gridColumn,
@@ -167,6 +182,7 @@ public sealed class SchemaUpgradeTests
         Assert.Equal("Bekliyor", order.FindProperty(nameof(Order.Status))!.GetDefaultValue());
 
         await AssertForeignKey(connection, db, "Products", nameof(Product.CategoryId), "Categories", cancellationToken);
+        await AssertForeignKey(connection, db, "Products", nameof(Product.ArchivedByUserId), "Users", cancellationToken);
         await AssertForeignKey(connection, db, "Carts", nameof(Cart.UserId), "Users", cancellationToken);
         await AssertForeignKey(connection, db, "CartItems", nameof(CartItem.CartId), "Carts", cancellationToken);
         await AssertForeignKey(connection, db, "CartItems", nameof(CartItem.ProductId), "Products", cancellationToken);
