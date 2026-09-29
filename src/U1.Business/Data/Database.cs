@@ -71,7 +71,7 @@ public sealed class Database(
 
         await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.001-schema.sql"));
         var version = await db.SchemaVersions.MaxAsync(x => (int?)x.Version) ?? 0;
-        if (version > 5)
+        if (version > 6)
             throw new InvalidOperationException("Veritabanı şeması bu uygulamadan daha yeni.");
 
         if (version < 2)
@@ -99,6 +99,13 @@ public sealed class Database(
         {
             await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.006-audit-history.sql"));
             db.SchemaVersions.Add(new SchemaVersion { Version = 5 });
+            await db.SaveChangesAsync();
+        }
+
+        if (version < 6)
+        {
+            await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.007-catalog-management.sql"));
+            db.SchemaVersions.Add(new SchemaVersion { Version = 6 });
             await db.SaveChangesAsync();
         }
 
