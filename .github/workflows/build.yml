@@ -22,6 +22,10 @@ jobs:
       - name: Restore solution
         run: dotnet restore U1.Business.sln
 
+      - name: Check source conventions
+        shell: pwsh
+        run: pwsh -File tests/verify-source.ps1
+
       - name: Build application with warnings as errors
         run: dotnet build src/U1.Business/U1.Business.csproj --no-restore --configuration Release -warnaserror
 
