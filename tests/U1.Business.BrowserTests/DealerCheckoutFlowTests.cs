@@ -196,7 +196,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
 
             var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" });
             await productRow.GetByRole(AriaRole.Link, new() { Name = "Düzenle" }).ClickAsync();
-            await Expect(Page).ToHaveURLAsync(new Regex("#admin-product\?id="));
+            await Expect(Page).ToHaveURLAsync(new Regex(@"#admin-product\?id="));
 
             var description = Page.Locator("textarea[name='description']");
             var staleDraft = "Tarayıcıda korunacak stale form " + Guid.NewGuid().ToString("N")[..8];
