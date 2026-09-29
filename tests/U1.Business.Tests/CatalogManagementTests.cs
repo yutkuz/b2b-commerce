@@ -164,7 +164,7 @@ public sealed class CatalogManagementTests(ApiFactory factory) : IClassFixture<A
         Assert.Equal(100m, ApiTest.Property(historicalLine, "unitPrice").GetDecimal());
 
         var removeArchived = await ApiTest.SendJson(
-            dealer, HttpMethod.Delete, $"/api/cart/{productId}", body: null, dealerToken);
+            dealer, HttpMethod.Delete, $"/api/cart/{productId}", body: null, csrf: dealerToken);
         Assert.Equal(HttpStatusCode.OK, removeArchived.StatusCode);
 
         categories = await admin.GetFromJsonAsync<JsonElement>(
