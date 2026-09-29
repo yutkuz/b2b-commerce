@@ -10,6 +10,7 @@
     <EmbeddedResource Include="Data/*.sql" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.0" />
+    <PackageReference Include="SkiaSharp" Version="4.151.2" />
   </ItemGroup>
 
 </Project>

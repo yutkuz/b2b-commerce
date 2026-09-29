@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using SkiaSharp;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
@@ -80,6 +81,111 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         await db.Products
             .Where(p => p.Code == "DG-001")
             .ExecuteUpdateAsync(setters => setters.SetProperty(p => p.Stock, 24), TestContext.Current.CancellationToken);
+    }
+}
+
+[Collection(ApiTestCollection.Name)]
+public sealed class ProductImageUploadTests(ApiFactory factory) : IClassFixture<ApiFactory>
+{
+    [Fact]
+    public async Task Valid_png_jpeg_and_webp_uploads_are_decoded_before_saving()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        using var admin = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var csrf = await ApiTest.LoginAdmin(admin);
+
+        foreach (var (format, extension) in new[]
+        {
+            (SKEncodedImageFormat.Png, ".png"),
+            (SKEncodedImageFormat.Jpeg, ".jpg"),
+            (SKEncodedImageFormat.Webp, ".webp")
+        })
+        {
+            var response = await Upload(
+                admin,
+                csrf,
+                Encode(format, 24, 24),
+                "test" + extension,
+                cancellationToken);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            var url = ApiTest.Property(body, "url").GetString()!;
+            Assert.EndsWith(extension, url, StringComparison.OrdinalIgnoreCase);
+            DeleteUploadedFile(url);
+        }
+    }
+
+    [Fact]
+    public async Task Truncated_or_excessive_dimension_images_are_rejected_without_saving()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        using var admin = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { HandleCookies = true });
+        var csrf = await ApiTest.LoginAdmin(admin);
+
+        var png = Encode(SKEncodedImageFormat.Png, 24, 24);
+        var truncated = png[..Math.Max(16, png.Length / 3)];
+        var corrupt = await Upload(
+            admin,
+            csrf,
+            truncated,
+            "truncated.png",
+            cancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, corrupt.StatusCode);
+
+        var oversized = await Upload(
+            admin,
+            csrf,
+            Encode(SKEncodedImageFormat.Png, ProductImageValidator.MaxDimension + 1, 1),
+            "oversized.png",
+            cancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, oversized.StatusCode);
+        var error = await oversized.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        Assert.Contains(
+            "4096",
+            ApiTest.Property(error, "message").GetString(),
+            StringComparison.Ordinal);
+    }
+
+    private static async Task<HttpResponseMessage> Upload(
+        HttpClient client,
+        string csrf,
+        byte[] bytes,
+        string fileName,
+        CancellationToken cancellationToken)
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(bytes), "file", fileName);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/admin/images")
+        {
+            Content = form
+        };
+        request.Headers.Add("X-CSRF-TOKEN", csrf);
+        return await client.SendAsync(request, cancellationToken);
+    }
+
+    private static byte[] Encode(
+        SKEncodedImageFormat format,
+        int width,
+        int height)
+    {
+        using var bitmap = new SKBitmap(width, height);
+        bitmap.Erase(SKColors.SteelBlue);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(format, 85)
+            ?? throw new InvalidOperationException("Test görseli kodlanamadı.");
+        return data.ToArray();
+    }
+
+    private void DeleteUploadedFile(string url)
+    {
+        var environment = factory.Services.GetRequiredService<IWebHostEnvironment>();
+        var relative = url.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        var path = Path.Combine(environment.WebRootPath, relative);
+        if (File.Exists(path))
+            File.Delete(path);
     }
 }
 

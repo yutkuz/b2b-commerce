@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
+using U1.Business.Services;
 
 namespace U1.Business.Endpoints;
 
@@ -78,31 +79,15 @@ public static partial class AdminEndpoints
                     throw new BusinessException(
                         "En fazla 4 MB boyutunda PNG, JPEG veya WebP seçin."
                     );
-                var form = await request.ReadFormAsync();
+                var form = await request.ReadFormAsync(request.HttpContext.RequestAborted);
                 var file = form.Files.GetFile("file");
                 if (file is null || file.Length == 0 || file.Length > 4 * 1024 * 1024)
                     throw new BusinessException("Geçerli bir görsel seçin (en fazla 4 MB).");
+
                 using var ms = new MemoryStream();
-                await file.CopyToAsync(ms);
+                await file.CopyToAsync(ms, request.HttpContext.RequestAborted);
                 var bytes = ms.ToArray();
-                string ext;
-                if (
-                    bytes.Length > 8
-                    && bytes[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })
-                )
-                    ext = ".png";
-                else if (bytes.Length > 3 && bytes[0] == 255 && bytes[1] == 216 && bytes[2] == 255)
-                    ext = ".jpg";
-                else if (
-                    bytes.Length > 12
-                    && System.Text.Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF"
-                    && System.Text.Encoding.ASCII.GetString(bytes, 8, 4) == "WEBP"
-                )
-                    ext = ".webp";
-                else
-                    throw new BusinessException(
-                        "Yalnızca PNG, JPEG ve WebP dosyaları kabul edilir."
-                    );
+                var ext = ProductImageValidator.Validate(bytes);
                 var name = Guid.NewGuid().ToString("N") + ext;
                 var folder = Path.Combine(env.WebRootPath, "uploads");
                 Directory.CreateDirectory(folder);
