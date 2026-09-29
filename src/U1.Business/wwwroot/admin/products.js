@@ -21,14 +21,15 @@ const num = (data, keys) =>
 export async function products() {
   const page = +(state.params.get("page") || 1);
   const d = await api(
-    "/products?" +
+    "/admin/products?" +
       new URLSearchParams({ q: state.params.get("q") || "", page }),
   );
   return (
     heading(
       "Ürün yönetimi",
       "Ürün bilgilerini, fiyatları ve stokları güncelleyin.",
-      /* HTML */ `<a class="button primary" href="#admin-product"
+      /* HTML */ `<a class="button" href="#admin-categories">Kategori yönetimi</a>
+        <a class="button primary" href="#admin-product"
         >${icon("plus")} Yeni ürün</a
       >`,
     ) +
@@ -48,6 +49,7 @@ export async function products() {
                     <th>Stok</th>
                     <th>Kritik seviye</th>
                     <th>Fiyat</th>
+                    <th>Durum</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -65,6 +67,11 @@ export async function products() {
                           <td>${p.stock} adet<br />${stock(p)}</td>
                           <td>${p.criticalStock}</td>
                           <td class="money">${money(p.price)}</td>
+                          <td>
+                            <span class="status-badge ${p.isArchived ? "rejected" : "approved"}">
+                              ${p.isArchived ? "Arşivde" : "Satışta"}
+                            </span>
+                          </td>
                           <td>
                             <a
                               class="button small"
@@ -87,7 +94,7 @@ export async function products() {
 export async function productForm() {
   const id = state.params.get("id");
   const p = id
-    ? await api("/products/" + id)
+    ? await api("/admin/products/" + id)
     : {
         code: "",
         name: "",
@@ -101,6 +108,8 @@ export async function productForm() {
         criticalStock: 5,
         price: "",
         categoryId: 1,
+        isArchived: false,
+        archiveReason: "",
       };
   return (
     heading(
@@ -171,6 +180,25 @@ ${esc(p.description)}</textarea>
               bağlantısı da kullanabilirsiniz.</small
             >
           </p>
+          ${id
+            ? p.isArchived
+              ? `<div class="notice error">
+                  <b>Ürün arşivde.</b><br />
+                  ${esc(p.archiveReason || "Neden belirtilmedi.")}
+                  <div style="margin-top:12px">
+                    <button class="button" type="button" data-action="restore-product" data-id="${p.id}">
+                      ${icon("refresh")} Yeniden satışa aç
+                    </button>
+                  </div>
+                </div>`
+              : `<div class="field">
+                  <label for="archive-reason">Arşivleme nedeni</label>
+                  <input class="input" id="archive-reason" name="archiveReason" maxlength="300" placeholder="Arşivlemek için kısa bir neden girin" />
+                </div>
+                <button class="button" type="button" data-action="archive-product" data-id="${p.id}">
+                  ${icon("trash")} Ürünü arşivle
+                </button>`
+            : ""}
         </aside>
       </div>
       <div class="form-actions">
@@ -185,6 +213,7 @@ ${esc(p.description)}</textarea>
 
 export async function submitProduct(form, data) {
   num(data, ["categoryId", "price", "stock", "criticalStock"]);
+  delete data.archiveReason;
   const id = form.dataset.id;
   if (id) data.version = form.dataset.version;
   try {
@@ -212,4 +241,30 @@ export async function submitProduct(form, data) {
   go("admin-products");
   toast("Ürün kaydedildi.");
   return;
+}
+
+
+export async function archiveProduct(element, render) {
+  const form = element.closest('form[data-form="product"]');
+  const reason = form?.querySelector('[name="archiveReason"]')?.value.trim() || "";
+  if (!reason) throw new Error("Arşivleme nedeni girin.");
+
+  await api("/admin/products/" + element.dataset.id + "/archive", {
+    method: "POST",
+    body: { rowVersion: form.dataset.version, reason },
+  });
+  state.meta = null;
+  await render();
+  toast("Ürün arşivlendi.");
+}
+
+export async function restoreProduct(element, render) {
+  const form = element.closest('form[data-form="product"]');
+  await api("/admin/products/" + element.dataset.id + "/restore", {
+    method: "POST",
+    body: { rowVersion: form.dataset.version },
+  });
+  state.meta = null;
+  await render();
+  toast("Ürün yeniden satışa açıldı.");
 }
