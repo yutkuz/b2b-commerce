@@ -52,11 +52,11 @@ public static partial class AdminEndpoints
 
         api.MapPut(
             "/orders/{id:int}/status",
-            async (int id, StatusInput input, OrderService orders) =>
+            async (int id, StatusInput input, OrderService orders, HttpContext c) =>
             {
                 if (input is null)
                     throw new BusinessException("Sipariş durumu gerekli.");
-                await orders.ChangeStatus(id, input.Status);
+                await orders.ChangeStatus(id, input.Status, c.UserId());
                 return Results.Ok();
             }
         );

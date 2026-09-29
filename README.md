@@ -119,13 +119,14 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | Ekran | Yapılabilenler |
 | --- | --- |
 | Genel bakış | Ürün/bayi sayısı, bekleyen siparişler, kritik stok |
-| Ürün yönetimi | Ürün ekleme/düzenleme; kategori, fiyat, stok ve kritik seviye belirleme |
+| Ürün yönetimi | Ürün ekleme/düzenleme; kategori, fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme |
 | Bayiler | Kullanıcı arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama |
 | Sipariş yönetimi | Siparişleri arama/filtreleme, detay, onay ve red |
 | Katalog düzeni | Kolon başlığı, sırası, genişliği, hizalaması, gösterimi ve cihaz görünürlüğü |
 | Duyurular | Ana sayfa metni, arama eylemi, sıra ve yayın durumu |
+| İşlem geçmişi | Tarih, ürün, kullanıcı ve işlem türüne göre stok hareketleri ile kritik yönetici olaylarını filtreleme |
 
-PNG/JPEG/WebP görsel yükleme sınırı 4 MB'dir; dosyalar `src/U1.Business/wwwroot/uploads` klasörüne yazılır. Eski bir ürün formu açıkken başka işlem ürünü veya stoğu değiştirirse kayıt reddedilir; uyarıdan sonra güncel ürünü yükleyin. Stok sayısını değiştirmek fiziksel stok düzeltmesi anlamına gelir. Ürün silme ve kategori yönetimi yoktur.
+PNG/JPEG/WebP görsel yükleme sınırı 4 MB'dir; dosyalar `src/U1.Business/wwwroot/uploads` klasörüne yazılır. Eski bir ürün formu açıkken başka işlem ürünü veya stoğu değiştirirse kayıt reddedilir; uyarıdan sonra güncel ürünü yükleyin. Stok sayısını değiştirmek fiziksel stok düzeltmesi anlamına gelir ve bir neden girilmesini gerektirir. Sipariş stok düşümü, red iadesi ve manuel düzeltmeler önceki/yeni bakiye ile işlem geçmişinde tutulur. Ürün silme ve kategori yönetimi yoktur.
 
 Sipariş **Bekliyor → Onaylandı** veya **Bekliyor/Onaylandı → Reddedildi** yönünde değişebilir. Reddedilen sipariş yeniden açılamaz; stok yalnız bir kez iade edilir. “Onaylandı”, sevk veya fatura kesildiği anlamına gelmez.
 
@@ -157,9 +158,9 @@ Eski kurulumda yarım kalmış demo kayıtları saptanırsa uygulama açıklayı
 
 Tek ASP.NET Core uygulaması hem sayfaları hem `/api` yollarını sunar. `Program.cs` sunucu, cookie oturumu, rol denetimi, CSRF koruması ve hata yanıtlarını kurar. `Endpoints/` kimlik, katalog, sepet/sipariş ve yönetim API'lerini içerir. `BusinessDbContext` EF Core modelini ve SQL şemasıyla eşleşen temel index/ilişki metadata'sını tanımlar. `Services/OrderService.cs` kritik sipariş işlemini transaction içinde yürütür. `Data/Database.cs` veritabanı oluşturma, SQL-first şema yükseltme ve demo kurulumunu yönetir. SQL Server'a özgü `UPDLOCK`, `HOLDLOCK` ve `sp_getapplock` gereken kritik yerlerde EF Core üzerinden ham SQL/ADO.NET kullanılır. `wwwroot/` tarayıcı arayüzüdür.
 
-Users, Categories, Products, Carts, CartItems, Orders, OrderItems, GridColumns, Banners, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
+Users, Categories, Products, Carts, CartItems, Orders, OrderItems, GridColumns, Banners, StockMovements, AdminEvents, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
 
-Sipariş, stok düşümü ve sepet temizliği tek transaction içindedir; biri başarısızsa tümü geri alınır. Aynı sipariş isteğinin tekrarı ikinci sipariş oluşturmaz. Eski yönetici ürün formu güncel stoğu ezemez. Bayi yalnız kendi siparişlerini görür; yönetim API'leri Admin rolü ister. Parolalar hash'lenir. Cookie HttpOnly/SameSite, değiştirici işlemlerde CSRF, giriş/kayıtta hız sınırı ve SQL sorgularında parametreleme kullanılır.
+Sipariş, stok düşümü, stok hareketi ve sepet temizliği tek transaction içindedir; biri başarısızsa tümü geri alınır. Red iadesi ile yönetici olayı da sipariş durumuyla aynı transaction'dadır. Aynı sipariş isteğinin tekrarı ikinci sipariş veya stok hareketi oluşturmaz. Eski yönetici ürün formu güncel stoğu ezemez. Bayi yalnız kendi siparişlerini görür; yönetim API'leri ve salt okunur işlem geçmişi Admin rolü ister. Parola/hash, cookie ve token değerleri işlem geçmişine yazılmaz. Parolalar hash'lenir. Cookie HttpOnly/SameSite, değiştirici işlemlerde CSRF, giriş/kayıtta hız sınırı ve SQL sorgularında parametreleme kullanılır.
 
 ## Gerçek yayına geçiş sınırı
 
@@ -210,9 +211,9 @@ GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test pr
 
 ### Doğrulanan kapsam
 
-CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün `rowversion` çakışması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red sonrası stok iadesinin yalnız bir kez yapılması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
+CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün `rowversion` çakışması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
 
-Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması ayrıca kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
+Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması; ayrıca yönetici işlem geçmişi filtresi kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
 
 ## Yeni bilgisayarda kurulum özeti
 

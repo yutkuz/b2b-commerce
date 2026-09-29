@@ -44,4 +44,7 @@ public class ProductInput
 public sealed class ProductUpdateInput : ProductInput
 {
     public string? Version { get; set; }
+
+    [StringLength(300)]
+    public string? StockReason { get; set; }
 }

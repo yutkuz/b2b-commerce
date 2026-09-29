@@ -68,6 +68,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
 
+        await db.StockMovements.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+        await db.AdminEvents.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
         await db.OrderItems.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
         await db.Orders.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
 
@@ -256,6 +258,8 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
         var dealerToken = await ApiTest.GetCsrf(guest);
         var forbidden = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/admin/products", ApiTest.ProductPayload(), dealerToken);
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        var forbiddenHistory = await guest.GetAsync("/api/admin/history", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenHistory.StatusCode);
 
         var nullCart = await ApiTest.SendJson(guest, HttpMethod.Post, "/api/cart", body: null, dealerToken);
         Assert.Equal(HttpStatusCode.BadRequest, nullCart.StatusCode);
@@ -296,6 +300,18 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
         var update = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
             ApiTest.ProductPayload(code, stock: 4, version: version), adminToken);
         Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+
+        var current = await admin.GetFromJsonAsync<JsonElement>(
+            $"/api/products/{productId}",
+            TestContext.Current.CancellationToken);
+        var missingReason = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
+            ApiTest.ProductPayload(
+                code,
+                stock: 3,
+                version: ApiTest.Property(current, "rowVersion").GetString(),
+                stockReason: null),
+            adminToken);
+        Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
 
         var stale = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/products/{productId}",
             ApiTest.ProductPayload(code, stock: 3, version: version), adminToken);
@@ -395,6 +411,28 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
         var afterRepeatReject = await buyer.GetFromJsonAsync<JsonElement>($"/api/products/{productId}", TestContext.Current.CancellationToken);
         Assert.Equal(5, ApiTest.Property(afterRepeatReject, "stock").GetInt32());
 
+        var history = await admin.GetFromJsonAsync<JsonElement>(
+            $"/api/admin/history?productId={productId}",
+            TestContext.Current.CancellationToken);
+        var historyItems = ApiTest.Property(history, "items").EnumerateArray().ToList();
+        Assert.Single(historyItems, item =>
+            ApiTest.Property(item, "kind").GetString() == "Stock"
+            && ApiTest.Property(item, "action").GetString() == "OrderPlaced");
+        Assert.Single(historyItems, item =>
+            ApiTest.Property(item, "kind").GetString() == "Stock"
+            && ApiTest.Property(item, "action").GetString() == "OrderRejected");
+        Assert.Single(historyItems, item =>
+            ApiTest.Property(item, "kind").GetString() == "Admin"
+            && ApiTest.Property(item, "action").GetString() == "ProductPriceChanged");
+        Assert.All(historyItems, item => Assert.DoesNotContain("CITest!2026", item.ToString()));
+
+        var future = Uri.EscapeDataString(DateTime.UtcNow.AddDays(1).ToString("O"));
+        var emptyHistory = await admin.GetFromJsonAsync<JsonElement>(
+            $"/api/admin/history?productId={productId}&from={future}&page=2",
+            TestContext.Current.CancellationToken);
+        Assert.Empty(ApiTest.Property(emptyHistory, "items").EnumerateArray());
+        Assert.Equal(2, ApiTest.Property(emptyHistory, "page").GetInt32());
+
         using var otherDealer = NewClient();
         await ApiTest.RegisterDealer(otherDealer);
         var foreignOrder = await otherDealer.GetAsync($"/api/orders/{orderId}", TestContext.Current.CancellationToken);
@@ -466,10 +504,19 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
                 phone = ApiTest.Property(managed, "phone").GetString(),
                 company = "Updated CI Dealer",
                 isActive = true,
-                newPassword = "",
+                newPassword = "CINewPassword!2026",
                 version = ApiTest.Property(managed, "version").GetInt32()
             }, adminToken);
         Assert.Equal(HttpStatusCode.OK, userUpdate.StatusCode);
+
+        var userHistory = await admin.GetFromJsonAsync<JsonElement>(
+            $"/api/admin/history?userId={ApiTest.Property(managed, "id").GetInt32()}&action=UserPasswordReset",
+            TestContext.Current.CancellationToken);
+        var userEvent = ApiTest.Property(userHistory, "items").EnumerateArray().Single();
+        var summary = ApiTest.Property(userEvent, "summary").GetString()!;
+        Assert.Contains("parolası sıfırlandı", summary);
+        Assert.DoesNotContain("CINewPassword!2026", summary);
+        Assert.DoesNotContain(dealerEmail, summary);
 
         var oldSession = await dealer.GetAsync("/api/auth/me", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Unauthorized, oldSession.StatusCode);
@@ -942,7 +989,8 @@ internal static class ApiTest
         string? code = null,
         int stock = 5,
         decimal price = 100m,
-        string? version = null) =>
+        string? version = null,
+        string? stockReason = "CI stok düzeltmesi") =>
         new
         {
             code = code ?? "CI-" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant(),
@@ -957,7 +1005,8 @@ internal static class ApiTest
             criticalStock = 2,
             price,
             categoryId = 1,
-            version
+            version,
+            stockReason
         };
 
     public static async Task<string> LoginAdmin(HttpClient client)

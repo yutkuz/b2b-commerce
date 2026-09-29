@@ -16,6 +16,8 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<Banner> Banners => Set<Banner>();
     public DbSet<SchemaVersion> SchemaVersions => Set<SchemaVersion>();
     public DbSet<DemoSetup> DemoSetup => Set<DemoSetup>();
+    public DbSet<AdminEvent> AdminEvents => Set<AdminEvent>();
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
     // Data/*.sql and SchemaVersions are the authoritative schema-migration mechanism.
     // EF Core owns runtime mapping/querying; keep this model aligned with the SQL schema.
@@ -142,6 +144,38 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasKey(x => x.Component);
             entity.Property(x => x.Component).HasMaxLength(16).IsUnicode(false);
             entity.Property(x => x.Status).HasMaxLength(16).IsUnicode(false);
+        });
+
+        modelBuilder.Entity<AdminEvent>(entity =>
+        {
+            entity.ToTable("AdminEvents");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.EventType).HasMaxLength(40).IsUnicode(false);
+            entity.Property(x => x.EntityType).HasMaxLength(30).IsUnicode(false);
+            entity.Property(x => x.Summary).HasMaxLength(500);
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
+            entity.HasIndex(x => new { x.CreatedAt, x.Id });
+            entity.HasIndex(x => new { x.ActorUserId, x.CreatedAt });
+            entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAt });
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<StockMovement>(entity =>
+        {
+            entity.ToTable("StockMovements");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.MovementType).HasMaxLength(40).IsUnicode(false);
+            entity.Property(x => x.Reason).HasMaxLength(300);
+            entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
+            entity.HasIndex(x => new { x.ProductId, x.CreatedAt, x.Id });
+            entity.HasIndex(x => new { x.ActorUserId, x.CreatedAt });
+            entity.HasIndex(x => new { x.OrderId, x.ProductId, x.MovementType })
+                .IsUnique()
+                .HasFilter("[OrderId] IS NOT NULL");
+            entity.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<AdminEvent>().WithMany().HasForeignKey(x => x.AdminEventId).OnDelete(DeleteBehavior.NoAction);
         });
     }
 }

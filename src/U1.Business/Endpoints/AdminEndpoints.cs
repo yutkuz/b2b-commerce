@@ -11,5 +11,6 @@ public static partial class AdminEndpoints
         MapOrders(api);
         MapGrid(api);
         MapBanners(api);
+        MapHistory(api);
     }
 }

@@ -138,7 +138,16 @@ public sealed class OrderService(
                 UnitPrice = line.Product.Price,
                 Total = line.Quantity * line.Product.Price
             });
+            var previousStock = line.Product.Stock;
             line.Product.Stock -= line.Quantity;
+            db.StockMovements.Add(AuditTrail.Stock(
+                line.ProductId,
+                previousStock,
+                line.Product.Stock,
+                "OrderPlaced",
+                $"{order.Number} numaralı sipariş için stok ayrıldı.",
+                userId,
+                order.Id));
         }
 
         await db.CartItems
@@ -270,7 +279,7 @@ public sealed class OrderService(
         "-" +
         Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
 
-    public async Task ChangeStatus(int id, string status)
+    public async Task ChangeStatus(int id, string status, int actorUserId)
     {
         if (status is not ("Onaylandı" or "Reddedildi"))
             throw new BusinessException("Geçersiz sipariş durumu.");
@@ -279,7 +288,7 @@ public sealed class OrderService(
         {
             try
             {
-                await ChangeStatusOnce(id, status);
+                await ChangeStatusOnce(id, status, actorUserId);
                 return;
             }
             catch (Exception ex) when (IsTransientSqlFailure(ex) && attempt < MaxTransientAttempts)
@@ -295,7 +304,7 @@ public sealed class OrderService(
         throw new InvalidOperationException("Sipariş durumu yeniden deneme döngüsü beklenmeyen şekilde sona erdi.");
     }
 
-    private async Task ChangeStatusOnce(int id, string status)
+    private async Task ChangeStatusOnce(int id, string status, int actorUserId)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
@@ -314,19 +323,33 @@ public sealed class OrderService(
         if (order.Status == "Reddedildi")
             throw new BusinessException("Reddedilen sipariş yeniden açılamaz. Yeni sipariş oluşturun.", 409);
 
+        var previousStatus = order.Status;
+        var audit = AuditTrail.Event(
+            actorUserId,
+            "OrderStatusChanged",
+            "Order",
+            order.Id,
+            $"{order.Number} numaralı siparişin durumu {previousStatus} değerinden {status} değerine güncellendi.");
+        db.AdminEvents.Add(audit);
+        await db.SaveChangesAsync();
+
         if (status == "Reddedildi")
-            await RestoreStock(db, id);
+            await RestoreStock(db, order, actorUserId, audit.Id);
 
         order.Status = status;
         await db.SaveChangesAsync();
         await tx.CommitAsync();
     }
 
-    private static async Task RestoreStock(BusinessDbContext db, int orderId)
+    private static async Task RestoreStock(
+        BusinessDbContext db,
+        Order order,
+        int actorUserId,
+        long adminEventId)
     {
         var lines = await db.OrderItems
             .AsNoTracking()
-            .Where(x => x.OrderId == orderId)
+            .Where(x => x.OrderId == order.Id)
             .OrderBy(x => x.ProductId)
             .Select(x => new { x.ProductId, x.Quantity })
             .ToListAsync();
@@ -345,7 +368,17 @@ public sealed class OrderService(
                     "STOCK_LIMIT");
             }
 
+            var previousStock = product.Stock;
             product.Stock += line.Quantity;
+            db.StockMovements.Add(AuditTrail.Stock(
+                product.Id,
+                previousStock,
+                product.Stock,
+                "OrderRejected",
+                $"{order.Number} numaralı sipariş reddedildiği için stok iade edildi.",
+                actorUserId,
+                order.Id,
+                adminEventId));
         }
     }
 

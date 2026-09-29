@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
+using U1.Business.Services;
 
 namespace U1.Business.Endpoints;
 
@@ -20,12 +21,13 @@ public static partial class AdminEndpoints
 
         api.MapPost(
             "/banners",
-            async (BannerInput input, BusinessDbContext db) =>
+            async (BannerInput input, BusinessDbContext db, HttpContext c) =>
             {
                 if (input is null)
                     throw new BusinessException("Duyuru bilgileri gerekli.");
                 input.SearchTerm ??= "";
                 Rules.Validate(input);
+                await using var tx = await db.Database.BeginTransactionAsync();
 
                 var banner = new Banner
                 {
@@ -38,19 +40,28 @@ public static partial class AdminEndpoints
                 };
                 db.Banners.Add(banner);
                 await db.SaveChangesAsync();
+                db.AdminEvents.Add(AuditTrail.Event(
+                    c.UserId(),
+                    "BannerCreated",
+                    "Banner",
+                    banner.Id,
+                    "Duyuru oluşturuldu."));
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
                 return new { id = banner.Id };
             }
         );
 
         api.MapPut(
             "/banners/{id:int}",
-            async (int id, BannerUpdateInput input, BusinessDbContext db) =>
+            async (int id, BannerUpdateInput input, BusinessDbContext db, HttpContext c) =>
             {
                 if (input is null)
                     throw new BusinessException("Duyuru bilgileri gerekli.");
                 input.SearchTerm ??= "";
                 Rules.Validate(input);
                 EnsureRowVersion(input.RowVersion, "Duyuru sürümü geçersiz.");
+                await using var tx = await db.Database.BeginTransactionAsync();
 
                 var banner = await db.Banners.SingleOrDefaultAsync(x => x.Id == id)
                     ?? throw new BusinessException("Duyuru bulunamadı.", 404);
@@ -80,6 +91,14 @@ public static partial class AdminEndpoints
                     );
                 }
 
+                db.AdminEvents.Add(AuditTrail.Event(
+                    c.UserId(),
+                    "BannerUpdated",
+                    "Banner",
+                    banner.Id,
+                    "Duyuru güncellendi."));
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
                 return Results.Ok();
             }
         );

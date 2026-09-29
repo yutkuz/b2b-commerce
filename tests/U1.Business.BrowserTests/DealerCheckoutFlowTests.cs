@@ -291,6 +291,15 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await dialog.GetByRole(AriaRole.Button, new() { Name = "Kaydet" }).ClickAsync();
 
             await Expect(Page.Locator("#page")).ToContainTextAsync(updatedSubtitle);
+
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-history");
+            await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "İşlem geçmişi" }))
+                .ToBeVisibleAsync();
+            await Page.GetByLabel("İşlem").SelectOptionAsync("BannerUpdated");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Filtrele" }).ClickAsync();
+            var historyRow = Page.Locator("#page .data-table tbody tr").First;
+            await Expect(historyRow).ToContainTextAsync("Duyuru güncelleme");
+            await Expect(historyRow).ToContainTextAsync("Duyuru güncellendi.");
         });
     }
 

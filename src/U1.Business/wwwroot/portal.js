@@ -55,7 +55,7 @@ export function portalShell(paths, brand) {
                 </nav><span class="nav-date">${new Date().toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric'})}</span>
             </div></div>
         </header>
-        ${admin ? `<div class="admin-navigation"><nav aria-label="Yönetim menüsü"><span>YÖNETİM</span>${['admin','admin-products','admin-orders','admin-users','admin-grid','admin-banners'].map(r => nav(r,paths[r][0])).join('')}</nav></div>` : ''}
+        ${admin ? `<div class="admin-navigation"><nav aria-label="Yönetim menüsü"><span>YÖNETİM</span>${['admin','admin-products','admin-orders','admin-users','admin-grid','admin-banners','admin-history'].map(r => nav(r,paths[r][0])).join('')}</nav></div>` : ''}
         <main class="content portal-content" id="main" tabindex="-1"><div class="portal-breadcrumb"><a href="#home">Ana sayfa</a>${state.route === 'home' ? '<span>/ Bayi portalı</span>' : '<span>/</span><span>'+esc(paths[state.route][0])+'</span>'}</div><div id="page"><div class="loading">Yükleniyor…</div></div></main>
         ${portalFooter()}
     </div>`;

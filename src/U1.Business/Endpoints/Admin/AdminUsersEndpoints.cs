@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
+using U1.Business.Services;
 
 namespace U1.Business.Endpoints;
 
@@ -86,6 +87,7 @@ public static partial class AdminEndpoints
                 var isActive = input.IsActive;
                 var version = input.Version;
                 var target = db.Users.Where(x => x.Id == id && x.AuthVersion == version);
+                await using var tx = await db.Database.BeginTransactionAsync();
 
                 int updated;
                 if (passwordHash is null)
@@ -123,6 +125,54 @@ public static partial class AdminEndpoints
                         "USER_CHANGED"
                     );
                 }
+
+                var events = new List<AdminEvent>();
+                if (u.IsActive != isActive)
+                {
+                    events.Add(AuditTrail.Event(
+                        c.UserId(),
+                        "UserStatusChanged",
+                        "User",
+                        id,
+                        $"Kullanıcı aktifliği {u.IsActive} değerinden {isActive} değerine değiştirildi."));
+                }
+                if (passwordHash is not null)
+                {
+                    events.Add(AuditTrail.Event(
+                        c.UserId(),
+                        "UserPasswordReset",
+                        "User",
+                        id,
+                        "Kullanıcı parolası sıfırlandı."));
+                }
+                if (
+                    u.FirstName != firstName
+                    || u.LastName != lastName
+                    || u.Email != email
+                    || u.Phone != phone
+                    || u.Company != company
+                )
+                {
+                    events.Add(AuditTrail.Event(
+                        c.UserId(),
+                        "UserUpdated",
+                        "User",
+                        id,
+                        "Kullanıcı profil bilgileri güncellendi."));
+                }
+                if (events.Count == 0)
+                {
+                    events.Add(AuditTrail.Event(
+                        c.UserId(),
+                        "UserUpdated",
+                        "User",
+                        id,
+                        "Kullanıcı kaydı yeniden kaydedildi."));
+                }
+
+                db.AdminEvents.AddRange(events);
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
 
                 return Results.Ok();
             }

@@ -4,7 +4,8 @@ import {
   products,
   productForm,
   submitProduct,
-} from "./admin/products.js?v=20260928b";
+} from "./admin/products.js?v=20260929a";
+import { history } from "./admin/history.js?v=20260929a";
 import {
   userList,
   showUserEditor,
@@ -35,6 +36,8 @@ export async function renderAdmin() {
       return grid();
     case "admin-banners":
       return bannerList();
+    case "admin-history":
+      return history();
   }
 }
 
@@ -51,6 +54,14 @@ export async function adminSubmit(kind, form, data, { render }) {
     const query = new URLSearchParams(data);
     query.set("page", "1");
     go(state.route + "?" + query);
+    return;
+  }
+  if (kind === "admin-history-filter") {
+    const query = new URLSearchParams(
+      Object.entries(data).filter(([, item]) => item !== ""),
+    );
+    query.set("page", "1");
+    go("admin-history?" + query);
     return;
   }
   if (kind === "product") return submitProduct(form, data);

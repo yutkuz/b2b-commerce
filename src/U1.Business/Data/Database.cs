@@ -71,7 +71,7 @@ public sealed class Database(
 
         await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.001-schema.sql"));
         var version = await db.SchemaVersions.MaxAsync(x => (int?)x.Version) ?? 0;
-        if (version > 4)
+        if (version > 5)
             throw new InvalidOperationException("Veritabanı şeması bu uygulamadan daha yeni.");
 
         if (version < 2)
@@ -92,6 +92,13 @@ public sealed class Database(
         {
             await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.005-admin-rowversion.sql"));
             db.SchemaVersions.Add(new SchemaVersion { Version = 4 });
+            await db.SaveChangesAsync();
+        }
+
+        if (version < 5)
+        {
+            await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.006-audit-history.sql"));
+            db.SchemaVersions.Add(new SchemaVersion { Version = 5 });
             await db.SaveChangesAsync();
         }
 
@@ -259,6 +266,17 @@ public sealed class Database(
             new Banner { Title="Her bağlantıda güven.", Subtitle="Servisinizin ihtiyaç duyduğu kablo ve adaptörler.", ButtonText="Bağlantı ürünleri", SearchTerm="kablo", IsActive=true, Position=1 }
         );
 
+        await db.SaveChangesAsync();
+
+        db.StockMovements.AddRange(items.Select(product => new StockMovement
+        {
+            ProductId = product.Id,
+            MovementType = "InitialBalance",
+            QuantityDelta = 0,
+            PreviousStock = product.Stock,
+            NewStock = product.Stock,
+            Reason = "Demo kataloğunun başlangıç bakiyesi."
+        }));
         await db.SaveChangesAsync();
     }
 }

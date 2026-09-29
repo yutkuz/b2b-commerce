@@ -140,6 +140,7 @@ export async function productForm() {
 ${esc(p.description)}</textarea>
             </div>
             ${field("Birim fiyat (TL)", "price", p.price, "number", 'min="0.01" max="99999999" step="0.01" required')}${field("Stok miktarı", "stock", p.stock, "number", 'min="0" max="1000000" step="1" required')}${field("Kritik stok seviyesi", "criticalStock", p.criticalStock, "number", 'min="0" max="1000000" step="1" required')}
+            ${id ? `<div class="full">${field("Stok değişiklik nedeni", "stockReason", "", "text", 'maxlength="300" placeholder="Stok değişiyorsa zorunludur"')}</div>` : ""}
           </div>
           <p class="muted">
             <small
