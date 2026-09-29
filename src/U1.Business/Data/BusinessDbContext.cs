@@ -42,6 +42,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.ToTable("Categories");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(80);
+            entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => x.Name).IsUnique();
         });
 
@@ -57,12 +58,16 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.SpecialCode1).HasMaxLength(80);
             entity.Property(x => x.SpecialCode2).HasMaxLength(80);
             entity.Property(x => x.ImageUrl).HasMaxLength(500);
+            entity.Property(x => x.ArchiveReason).HasMaxLength(300).HasDefaultValue("");
+            entity.Property(x => x.IsArchived).HasDefaultValue(false);
             entity.Property(x => x.Price).HasPrecision(18, 2);
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
             entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => x.Code).IsUnique();
             entity.HasIndex(x => new { x.CategoryId, x.Brand });
+            entity.HasIndex(x => new { x.IsArchived, x.CategoryId, x.Brand });
             entity.HasOne<Category>().WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.ArchivedByUserId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<Cart>(entity =>
