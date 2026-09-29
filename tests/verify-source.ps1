@@ -6,8 +6,13 @@ $sourceRoots = @(
     "tests/U1.Business.Tests",
     "tests/U1.Business.BrowserTests"
 )
+$generatedDirectoryNames = @("bin", "obj", "node_modules", "TestResults")
 $sourceFiles = Get-ChildItem $sourceRoots -Recurse -File |
-    Where-Object { $_.Extension -in @(".cs", ".js") }
+    Where-Object {
+        $_.Extension -in @(".cs", ".js") -and
+        -not ($_.FullName.Split([System.IO.Path]::DirectorySeparatorChar) |
+            Where-Object { $_ -in $generatedDirectoryNames })
+    }
 
 foreach ($file in $sourceFiles) {
     $text = [System.IO.File]::ReadAllText($file.FullName)
