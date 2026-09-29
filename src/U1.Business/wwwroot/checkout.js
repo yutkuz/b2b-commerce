@@ -364,6 +364,16 @@ export async function submitCheckout({ renderPage } = {}) {
             return;
         }
 
+        if (error.code === 'PRODUCT_ARCHIVED') {
+            saveApproval(null);
+            await refreshCart();
+            closeModal();
+            if (renderPage) {
+                await renderPage();
+            }
+            throw error;
+        }
+
         if (error.status && error.status < 500 && error.code !== 'REQUEST_BUSY') {
             saveApproval(null);
         } else {
