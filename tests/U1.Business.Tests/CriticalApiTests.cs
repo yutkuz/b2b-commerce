@@ -318,6 +318,12 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
         var bannerCreated = await bannerCreate.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         var bannerId = ApiTest.Property(bannerCreated, "id").GetInt32();
 
+        var createdBanners = await admin.GetFromJsonAsync<JsonElement>(
+            "/api/admin/banners",
+            TestContext.Current.CancellationToken);
+        var createdBanner = createdBanners.EnumerateArray()
+            .Single(x => ApiTest.Property(x, "id").GetInt32() == bannerId);
+
         var bannerUpdate = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/banners/{bannerId}", new
         {
             banner.title,
@@ -325,7 +331,8 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
             banner.buttonText,
             banner.searchTerm,
             banner.isActive,
-            banner.position
+            banner.position,
+            rowVersion = ApiTest.Property(createdBanner, "rowVersion").GetString()
         }, adminToken);
         Assert.Equal(HttpStatusCode.OK, bannerUpdate.StatusCode);
 
@@ -363,6 +370,147 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
 
     private HttpClient NewClient() =>
         factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+}
+
+
+[Collection(ApiTestCollection.Name)]
+public sealed class AdminConfigurationConcurrencyTests(ApiFactory factory) : IClassFixture<ApiFactory>
+{
+    [Fact]
+    public async Task Two_admin_clients_cannot_silently_overwrite_grid_or_banner_changes()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        using var first = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { HandleCookies = true });
+        using var second = factory.CreateClient(
+            new WebApplicationFactoryClientOptions { HandleCookies = true });
+
+        var firstToken = await ApiTest.LoginAdmin(first);
+        var secondToken = await ApiTest.LoginAdmin(second);
+
+        var firstGrid = await first.GetFromJsonAsync<JsonElement>(
+            "/api/admin/grid",
+            cancellationToken);
+        var secondGrid = await second.GetFromJsonAsync<JsonElement>(
+            "/api/admin/grid",
+            cancellationToken);
+
+        var firstGridSave = await ApiTest.SendJson(
+            first,
+            HttpMethod.Put,
+            "/api/admin/grid",
+            GridPayload(firstGrid, "A"),
+            firstToken);
+        Assert.Equal(HttpStatusCode.OK, firstGridSave.StatusCode);
+
+        var staleGridSave = await ApiTest.SendJson(
+            second,
+            HttpMethod.Put,
+            "/api/admin/grid",
+            GridPayload(secondGrid, "B"),
+            secondToken);
+        Assert.Equal(HttpStatusCode.Conflict, staleGridSave.StatusCode);
+        var gridConflict = await staleGridSave.Content.ReadFromJsonAsync<JsonElement>(
+            cancellationToken);
+        Assert.Equal("GRID_CHANGED", ApiTest.Property(gridConflict, "code").GetString());
+
+        var persistedGrid = await first.GetFromJsonAsync<JsonElement>(
+            "/api/admin/grid",
+            cancellationToken);
+        Assert.EndsWith(
+            " A",
+            ApiTest.Property(persistedGrid[0], "label").GetString(),
+            StringComparison.Ordinal);
+
+        var createBanner = await ApiTest.SendJson(
+            first,
+            HttpMethod.Post,
+            "/api/admin/banners",
+            new
+            {
+                title = "CI concurrency banner",
+                subtitle = "Original",
+                buttonText = "Aç",
+                searchTerm = "CI",
+                isActive = true,
+                position = 90
+            },
+            firstToken);
+        createBanner.EnsureSuccessStatusCode();
+        var created = await createBanner.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        var bannerId = ApiTest.Property(created, "id").GetInt32();
+
+        var firstBanners = await first.GetFromJsonAsync<JsonElement>(
+            "/api/admin/banners",
+            cancellationToken);
+        var secondBanners = await second.GetFromJsonAsync<JsonElement>(
+            "/api/admin/banners",
+            cancellationToken);
+        var firstBanner = firstBanners.EnumerateArray()
+            .Single(x => ApiTest.Property(x, "id").GetInt32() == bannerId);
+        var secondBanner = secondBanners.EnumerateArray()
+            .Single(x => ApiTest.Property(x, "id").GetInt32() == bannerId);
+
+        var firstBannerSave = await ApiTest.SendJson(
+            first,
+            HttpMethod.Put,
+            $"/api/admin/banners/{bannerId}",
+            BannerPayload(firstBanner, "First admin"),
+            firstToken);
+        Assert.Equal(HttpStatusCode.OK, firstBannerSave.StatusCode);
+
+        var staleBannerSave = await ApiTest.SendJson(
+            second,
+            HttpMethod.Put,
+            $"/api/admin/banners/{bannerId}",
+            BannerPayload(secondBanner, "Second admin"),
+            secondToken);
+        Assert.Equal(HttpStatusCode.Conflict, staleBannerSave.StatusCode);
+        var bannerConflict = await staleBannerSave.Content.ReadFromJsonAsync<JsonElement>(
+            cancellationToken);
+        Assert.Equal("BANNER_CHANGED", ApiTest.Property(bannerConflict, "code").GetString());
+
+        var persistedBanners = await first.GetFromJsonAsync<JsonElement>(
+            "/api/admin/banners",
+            cancellationToken);
+        var persistedBanner = persistedBanners.EnumerateArray()
+            .Single(x => ApiTest.Property(x, "id").GetInt32() == bannerId);
+        Assert.Equal(
+            "First admin",
+            ApiTest.Property(persistedBanner, "subtitle").GetString());
+    }
+
+    private static object[] GridPayload(JsonElement grid, string suffix) =>
+        grid.EnumerateArray()
+            .Select((column, index) => new
+            {
+                id = ApiTest.Property(column, "id").GetInt32(),
+                field = ApiTest.Property(column, "field").GetString(),
+                label = ApiTest.Property(column, "label").GetString()
+                    + (index == 0 ? " " + suffix : ""),
+                renderType = ApiTest.Property(column, "renderType").GetString(),
+                position = ApiTest.Property(column, "position").GetInt32(),
+                width = ApiTest.Property(column, "width").GetInt32(),
+                align = ApiTest.Property(column, "align").GetString(),
+                desktop = ApiTest.Property(column, "desktop").GetBoolean(),
+                tablet = ApiTest.Property(column, "tablet").GetBoolean(),
+                mobile = ApiTest.Property(column, "mobile").GetBoolean(),
+                rowVersion = ApiTest.Property(column, "rowVersion").GetString()
+            })
+            .Cast<object>()
+            .ToArray();
+
+    private static object BannerPayload(JsonElement banner, string subtitle) =>
+        new
+        {
+            title = ApiTest.Property(banner, "title").GetString(),
+            subtitle,
+            buttonText = ApiTest.Property(banner, "buttonText").GetString(),
+            searchTerm = ApiTest.Property(banner, "searchTerm").GetString(),
+            isActive = ApiTest.Property(banner, "isActive").GetBoolean(),
+            position = ApiTest.Property(banner, "position").GetInt32(),
+            rowVersion = ApiTest.Property(banner, "rowVersion").GetString()
+        };
 }
 
 [Collection(ApiTestCollection.Name)]

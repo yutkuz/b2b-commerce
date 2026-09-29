@@ -98,6 +98,7 @@ public sealed class GridColumn
     public bool Desktop { get; set; } = true;
     public bool Tablet { get; set; } = true;
     public bool Mobile { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class Banner
@@ -109,6 +110,7 @@ public sealed class Banner
     public string SearchTerm { get; set; } = "";
     public bool IsActive { get; set; }
     public int Position { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class SchemaVersion

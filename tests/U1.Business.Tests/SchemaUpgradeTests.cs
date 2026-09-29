@@ -53,17 +53,17 @@ public sealed class SchemaUpgradeTests
 
             await database.Initialize(development: false);
             await AssertPreservedState(factory, passwordHash, cancellationToken);
-            Assert.Equal(3, await Scalar<int>(connection,
+            Assert.Equal(4, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.SchemaVersions", cancellationToken));
             Assert.Equal(1, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.DemoSetup WHERE Component = 'catalog'", cancellationToken));
 
             await Execute(connection,
-                "INSERT INTO dbo.SchemaVersions(Version) VALUES(4)", cancellationToken);
+                "INSERT INTO dbo.SchemaVersions(Version) VALUES(5)", cancellationToken);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => database.Initialize(development: false));
             Assert.Equal("Veritabanı şeması bu uygulamadan daha yeni.", error.Message);
-            Assert.Equal(4, await Scalar<int>(connection,
+            Assert.Equal(5, await Scalar<int>(connection,
                 "SELECT MAX(Version) FROM dbo.SchemaVersions", cancellationToken));
             await AssertPreservedState(factory, passwordHash, cancellationToken);
         }
@@ -110,6 +110,8 @@ public sealed class SchemaUpgradeTests
         var product = db.Model.FindEntityType(typeof(Product))!;
         var order = db.Model.FindEntityType(typeof(Order))!;
         var orderItem = db.Model.FindEntityType(typeof(OrderItem))!;
+        var gridColumn = db.Model.FindEntityType(typeof(GridColumn))!;
+        var banner = db.Model.FindEntityType(typeof(Banner))!;
 
         await AssertColumn(connection, "Users", "Email", "nvarchar", 400, 0, 0,
             user.FindProperty(nameof(User.Email))!, 200, cancellationToken);
@@ -131,6 +133,19 @@ public sealed class SchemaUpgradeTests
         Assert.True(rowVersion.IsConcurrencyToken);
         Assert.Equal(ValueGenerated.OnAddOrUpdate, rowVersion.ValueGenerated);
 
+        await AssertRowVersion(
+            connection,
+            gridColumn,
+            "GridColumns",
+            nameof(GridColumn.RowVersion),
+            cancellationToken);
+        await AssertRowVersion(
+            connection,
+            banner,
+            "Banners",
+            nameof(Banner.RowVersion),
+            cancellationToken);
+
         var createdAt = await ReadColumn(connection, "Orders", "CreatedAt", cancellationToken);
         Assert.Contains("sysutcdatetime", createdAt.Default!.ToLowerInvariant());
         Assert.Equal("SYSUTCDATETIME()",
@@ -146,6 +161,21 @@ public sealed class SchemaUpgradeTests
         await AssertForeignKey(connection, db, "Orders", nameof(Order.UserId), "Users", cancellationToken);
         await AssertForeignKey(connection, db, "OrderItems", nameof(OrderItem.OrderId), "Orders", cancellationToken);
         await AssertForeignKey(connection, db, "OrderItems", nameof(OrderItem.ProductId), "Products", cancellationToken);
+    }
+
+    private static async Task AssertRowVersion(
+        SqlConnection connection,
+        IEntityType entity,
+        string table,
+        string propertyName,
+        CancellationToken cancellationToken)
+    {
+        var property = entity.FindProperty(propertyName)!;
+        var column = await ReadColumn(connection, table, propertyName, cancellationToken);
+        Assert.Equal("timestamp", column.Type);
+        Assert.Equal(8, column.Length);
+        Assert.True(property.IsConcurrencyToken);
+        Assert.Equal(ValueGenerated.OnAddOrUpdate, property.ValueGenerated);
     }
 
     private static async Task AssertForeignKey(

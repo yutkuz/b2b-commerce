@@ -16,6 +16,7 @@ import {
   bannerList,
   showBannerEditor,
   submitBanner,
+  reloadBannerEditor,
 } from "./admin/banners.js?v=20260928b";
 
 export async function renderAdmin() {
@@ -39,6 +40,8 @@ export async function renderAdmin() {
 
 export async function adminAction(action, element, { render }) {
   if (action === "reload-product") return render();
+  if (action === "reload-grid") return render();
+  if (action === "reload-banner") return reloadBannerEditor(element, render);
   if (action === "user-edit") return showUserEditor(element);
   if (action === "banner-edit") return showBannerEditor(element);
 }

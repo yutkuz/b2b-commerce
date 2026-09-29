@@ -95,6 +95,29 @@ public record CheckoutLine(int ProductId, int Quantity, decimal UnitPrice);
 public record CheckoutInput(Guid RequestId, string? Note, CheckoutLine[]? Lines);
 public record StatusInput(string Status);
 
+public sealed class GridColumnUpdateInput
+{
+    public int Id { get; set; }
+    public string Field { get; set; } = "";
+
+    [Required, StringLength(60)]
+    public string Label { get; set; } = "";
+
+    public string RenderType { get; set; } = "text";
+
+    [Range(0, 100)]
+    public int Position { get; set; }
+
+    [Range(60, 600)]
+    public int Width { get; set; }
+
+    public string Align { get; set; } = "left";
+    public bool Desktop { get; set; } = true;
+    public bool Tablet { get; set; } = true;
+    public bool Mobile { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class BannerInput
 {
     [Required, StringLength(100)]
@@ -113,4 +136,9 @@ public sealed class BannerInput
 
     [Range(0, 100)]
     public int Position { get; set; }
+}
+
+public sealed class BannerUpdateInput : BannerInput
+{
+    public byte[] RowVersion { get; set; } = [];
 }

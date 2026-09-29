@@ -44,23 +44,42 @@ public static partial class AdminEndpoints
 
         api.MapPut(
             "/banners/{id:int}",
-            async (int id, BannerInput input, BusinessDbContext db) =>
+            async (int id, BannerUpdateInput input, BusinessDbContext db) =>
             {
                 if (input is null)
                     throw new BusinessException("Duyuru bilgileri gerekli.");
                 input.SearchTerm ??= "";
                 Rules.Validate(input);
+                EnsureRowVersion(input.RowVersion, "Duyuru sürümü geçersiz.");
 
                 var banner = await db.Banners.SingleOrDefaultAsync(x => x.Id == id)
                     ?? throw new BusinessException("Duyuru bulunamadı.", 404);
 
+                db.Entry(banner).Property(x => x.RowVersion).OriginalValue = input.RowVersion;
                 banner.Title = input.Title;
                 banner.Subtitle = input.Subtitle;
                 banner.ButtonText = input.ButtonText;
                 banner.SearchTerm = input.SearchTerm;
                 banner.IsActive = input.IsActive;
                 banner.Position = input.Position;
-                await db.SaveChangesAsync();
+
+                try
+                {
+                    await db.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    db.ChangeTracker.Clear();
+                    if (!await db.Banners.AsNoTracking().AnyAsync(x => x.Id == id))
+                        throw new BusinessException("Duyuru bulunamadı.", 404);
+
+                    throw new BusinessException(
+                        "Duyuru başka bir yönetici tarafından değiştirildi. Girdilerinizi koruyarak güncel duyuruyu yeniden yükleyin.",
+                        409,
+                        "BANNER_CHANGED"
+                    );
+                }
+
                 return Results.Ok();
             }
         );

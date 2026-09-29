@@ -20,7 +20,7 @@ public static partial class AdminEndpoints
 
         api.MapPut(
             "/grid",
-            async (GridColumn[] columns, BusinessDbContext db) =>
+            async (GridColumnUpdateInput[] columns, BusinessDbContext db) =>
             {
                 if (
                     columns is null
@@ -38,6 +38,8 @@ public static partial class AdminEndpoints
                 foreach (var col in columns)
                 {
                     Rules.Validate(col);
+                    EnsureRowVersion(col.RowVersion, "Katalog düzeni sürümü geçersiz.");
+
                     var original = saved.SingleOrDefault(x => x.Id == col.Id);
                     if (
                         original is null
@@ -66,6 +68,7 @@ public static partial class AdminEndpoints
                             "Ürün adı, fiyat ve satın alma kolonları tüm cihazlarda açık kalmalıdır."
                         );
 
+                    db.Entry(original).Property(x => x.RowVersion).OriginalValue = col.RowVersion;
                     original.Label = col.Label;
                     original.RenderType = col.RenderType;
                     original.Position = col.Position;
@@ -76,10 +79,37 @@ public static partial class AdminEndpoints
                     original.Mobile = col.Mobile;
                 }
 
-                await db.SaveChangesAsync();
-                await tx.CommitAsync();
+                try
+                {
+                    await db.SaveChangesAsync();
+                    await tx.CommitAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    await tx.RollbackAsync();
+                    db.ChangeTracker.Clear();
+
+                    var ids = columns.Select(x => x.Id).ToArray();
+                    var existingCount = await db.GridColumns.AsNoTracking()
+                        .CountAsync(x => ids.Contains(x.Id));
+                    if (existingCount != columns.Length)
+                        throw new BusinessException("Katalog kolonu bulunamadı.", 404);
+
+                    throw new BusinessException(
+                        "Katalog düzeni başka bir yönetici tarafından değiştirildi. Girdilerinizi koruyarak güncel düzeni yeniden yükleyin.",
+                        409,
+                        "GRID_CHANGED"
+                    );
+                }
+
                 return Results.Ok();
             }
         );
+    }
+
+    private static void EnsureRowVersion(byte[] version, string message)
+    {
+        if (version is null || version.Length != 8)
+            throw new BusinessException(message);
     }
 }

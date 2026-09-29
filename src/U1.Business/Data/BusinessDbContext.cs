@@ -115,6 +115,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Label).HasMaxLength(60);
             entity.Property(x => x.RenderType).HasMaxLength(20).IsUnicode(false);
             entity.Property(x => x.Align).HasMaxLength(10).IsUnicode(false);
+            entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => x.Field).IsUnique();
         });
 
@@ -126,6 +127,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Subtitle).HasMaxLength(300);
             entity.Property(x => x.ButtonText).HasMaxLength(40);
             entity.Property(x => x.SearchTerm).HasMaxLength(100);
+            entity.Property(x => x.RowVersion).IsRowVersion();
         });
 
         modelBuilder.Entity<SchemaVersion>(entity =>

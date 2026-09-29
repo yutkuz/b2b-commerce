@@ -154,7 +154,24 @@ export async function submitGrid(form, render) {
       mobile: get("mobile").checked,
     };
   });
-  await api("/admin/grid", { method: "PUT", body: data });
+  try {
+    await api("/admin/grid", { method: "PUT", body: data });
+  } catch (error) {
+    if (error.code === "GRID_CHANGED") {
+      let notice = form.querySelector(".grid-conflict");
+      if (!notice) {
+        notice = document.createElement("div");
+        notice.className = "notice grid-conflict";
+        notice.setAttribute("role", "alert");
+        form.prepend(notice);
+      }
+      notice.innerHTML =
+        'Katalog düzeni başka bir yönetici tarafından değiştirildi. Girdileriniz korunuyor. <button type="button" class="button small" data-action="reload-grid">Güncel düzeni yükle</button>.';
+      notice.querySelector("button").focus();
+      return;
+    }
+    throw error;
+  }
   state.meta = null;
   await render();
   toast("Katalog düzeni kaydedildi.");
