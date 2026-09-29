@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Microsoft.Playwright;
 using Microsoft.Playwright.Xunit.v3;
 
@@ -10,6 +11,67 @@ namespace U1.Business.BrowserTests;
 
 public sealed class DealerCheckoutFlowTests : PageTest
 {
+    [Fact]
+    public async Task Lost_checkout_response_keeps_the_same_request_id_after_reload()
+    {
+        await using var application = await BrowserTestApplication.StartAsync();
+        await Page.GotoAsync($"{application.BaseUrl}/#login");
+        await Page.GetByLabel("E-posta adresi").FillAsync("bayi@u1.local");
+        await Page.GetByLabel("Şifre").FillAsync("U1Bayi!2026");
+        await Page.GetByRole(AriaRole.Button, new() { Name = "Giriş yap" }).ClickAsync();
+        await Expect(Page).ToHaveURLAsync(new Regex("#home$"));
+
+        await Page.GotoAsync($"{application.BaseUrl}/#catalog");
+        await Page.GetByLabel("Ürün ara").FillAsync("DG-001");
+        var productRow = Page.Locator("tbody tr").Filter(new() { HasText = "DG-001" }).First;
+        await Expect(productRow).ToBeVisibleAsync();
+        await productRow.Locator("[data-action='add']").ClickAsync();
+        await Expect(Page.Locator("[data-cart-count]").First).ToHaveTextAsync("1");
+
+        var requestIds = new List<Guid>();
+        var loseFirstResponse = true;
+        await Page.RouteAsync("**/api/orders", async route =>
+        {
+            if (route.Request.Method != "POST")
+            {
+                await route.ContinueAsync();
+                return;
+            }
+
+            using var payload = JsonDocument.Parse(route.Request.PostData!);
+            requestIds.Add(payload.RootElement.GetProperty("requestId").GetGuid());
+            if (loseFirstResponse)
+            {
+                loseFirstResponse = false;
+                await using var committed = await route.FetchAsync();
+                Assert.Equal(200, committed.Status);
+                await route.AbortAsync();
+            }
+            else
+            {
+                await route.ContinueAsync();
+            }
+        });
+
+        await Page.GotoAsync($"{application.BaseUrl}/#cart");
+        await Page.GetByRole(AriaRole.Button, new() { Name = "Siparişi gözden geçir" }).ClickAsync();
+        await Page.GetByRole(AriaRole.Dialog)
+            .GetByRole(AriaRole.Button, new() { Name = "Siparişi oluştur" }).ClickAsync();
+        await Expect(Page.GetByRole(AriaRole.Dialog)
+            .GetByRole(AriaRole.Button, new() { Name = "Önceki siparişi sorgula" }))
+            .ToBeVisibleAsync();
+
+        await Page.ReloadAsync();
+        await Page.GotoAsync($"{application.BaseUrl}/#cart");
+        await Page.GetByRole(AriaRole.Button, new() { Name = "Bekleyen siparişi sorgula" }).ClickAsync();
+        await Page.GetByRole(AriaRole.Dialog)
+            .GetByRole(AriaRole.Button, new() { Name = "Önceki siparişi sorgula" }).ClickAsync();
+        await Expect(Page).ToHaveURLAsync(new Regex("#orders$"));
+        Assert.Equal(2, requestIds.Count);
+        Assert.Equal(requestIds[0], requestIds[1]);
+        await Expect(Page.Locator("#page .data-table tbody tr")).ToHaveCountAsync(1);
+    }
+
     [Fact]
     public async Task Dealer_can_login_add_product_to_cart_and_place_order()
     {

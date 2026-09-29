@@ -349,7 +349,9 @@ export async function submitCheckout({ renderPage } = {}) {
         if (error.status && error.status < 500 && error.code !== 'REQUEST_BUSY') {
             saveApproval(null);
         } else {
-            saveApproval({ ...approval, status: 'unknown' });
+            const unknown = { ...approval, status: 'unknown' };
+            saveApproval(unknown);
+            renderCheckoutDialog(unknown);
         }
 
         throw error;
