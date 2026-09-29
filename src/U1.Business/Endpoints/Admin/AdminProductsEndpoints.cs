@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
@@ -9,12 +10,112 @@ public static partial class AdminEndpoints
 {
     private static void MapProducts(RouteGroupBuilder api)
     {
+        api.MapGet(
+            "/products",
+            async (string? q, bool? archived, int? page, BusinessDbContext db) =>
+            {
+                var pageNumber = Math.Clamp(page ?? 1, 1, 100000);
+                q = (q ?? "").Trim();
+                if (q.Length > 200)
+                    throw new BusinessException("Arama metni en fazla 200 karakter olabilir.");
+
+                var query =
+                    from product in db.Products.AsNoTracking()
+                    join category in db.Categories.AsNoTracking()
+                        on product.CategoryId equals category.Id
+                    select new { Product = product, Category = category.Name };
+
+                if (q.Length > 0)
+                {
+                    var search = "%"
+                        + q.Replace("~", "~~")
+                            .Replace("%", "~%")
+                            .Replace("_", "~_")
+                            .Replace("[", "~[")
+                        + "%";
+
+                    query = query.Where(x =>
+                        EF.Functions.Like(x.Product.Name, search, "~")
+                        || EF.Functions.Like(x.Product.Code, search, "~")
+                        || EF.Functions.Like(x.Product.Brand, search, "~")
+                        || EF.Functions.Like(x.Category, search, "~"));
+                }
+
+                if (archived is not null)
+                    query = query.Where(x => x.Product.IsArchived == archived.Value);
+
+                var total = await query.CountAsync();
+                var items = await query
+                    .OrderBy(x => x.Product.IsArchived)
+                    .ThenBy(x => x.Product.Id)
+                    .Skip((pageNumber - 1) * 20)
+                    .Take(20)
+                    .Select(x => new
+                    {
+                        x.Product.Id,
+                        x.Product.Code,
+                        x.Product.Name,
+                        x.Product.Brand,
+                        x.Product.ImageUrl,
+                        x.Product.Stock,
+                        x.Product.CriticalStock,
+                        x.Product.Price,
+                        x.Product.CategoryId,
+                        x.Product.IsArchived,
+                        x.Product.ArchivedAt,
+                        x.Product.ArchiveReason,
+                        x.Product.RowVersion,
+                        x.Category
+                    })
+                    .ToListAsync();
+
+                return new { items, total, page = pageNumber, pageSize = 20 };
+            }
+        );
+
+        api.MapGet(
+            "/products/{id:int}",
+            async (int id, BusinessDbContext db) =>
+            {
+                var product = await (
+                    from p in db.Products.AsNoTracking()
+                    join category in db.Categories.AsNoTracking()
+                        on p.CategoryId equals category.Id
+                    where p.Id == id
+                    select new
+                    {
+                        p.Id,
+                        p.Code,
+                        p.Name,
+                        p.Description,
+                        p.Brand,
+                        p.ManufacturerCode,
+                        p.SpecialCode1,
+                        p.SpecialCode2,
+                        p.ImageUrl,
+                        p.Stock,
+                        p.CriticalStock,
+                        p.Price,
+                        p.CategoryId,
+                        p.CreatedAt,
+                        p.IsArchived,
+                        p.ArchivedAt,
+                        p.ArchivedByUserId,
+                        p.ArchiveReason,
+                        p.RowVersion,
+                        Category = category.Name
+                    }).SingleOrDefaultAsync();
+
+                return product ?? throw new BusinessException("Ürün bulunamadı.", 404);
+            }
+        );
+
         api.MapPost(
             "/products",
             async (ProductInput input, BusinessDbContext db, HttpContext c) =>
             {
+                await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
                 await ValidateProduct(input, db);
-                await using var tx = await db.Database.BeginTransactionAsync();
                 var product = ToProduct(input);
                 db.Products.Add(product);
                 await db.SaveChangesAsync();
@@ -62,8 +163,8 @@ public static partial class AdminEndpoints
                 if (version.Length != 8)
                     throw new BusinessException("Ürün sürümü geçersiz.");
 
+                await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
                 await ValidateProduct(input, db);
-                await using var tx = await db.Database.BeginTransactionAsync();
                 var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
                     ?? throw new BusinessException("Ürün bulunamadı.", 404);
                 var previousStock = product.Stock;
@@ -84,11 +185,7 @@ public static partial class AdminEndpoints
                     if (!await db.Products.AsNoTracking().AnyAsync(x => x.Id == id))
                         throw new BusinessException("Ürün bulunamadı.", 404);
 
-                    throw new BusinessException(
-                        "Ürün başka bir işlemde değişti. Girdilerinizi koruyarak güncel ürünü yeniden yükleyin.",
-                        409,
-                        "PRODUCT_CHANGED"
-                    );
+                    throw ProductChanged();
                 }
 
                 var summary = previousPrice == product.Price
@@ -122,6 +219,95 @@ public static partial class AdminEndpoints
         );
 
         api.MapPost(
+            "/products/{id:int}/archive",
+            async (int id, ProductArchiveInput input, BusinessDbContext db, HttpContext c) =>
+            {
+                if (input is null || string.IsNullOrWhiteSpace(input.Reason))
+                    throw new BusinessException("Arşivleme nedeni gerekli.");
+                Rules.Validate(input);
+                EnsureRowVersion(input.RowVersion, "Ürün sürümü geçersiz.");
+
+                await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+                var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
+                    ?? throw new BusinessException("Ürün bulunamadı.", 404);
+                EnsureProductVersion(product, input.RowVersion);
+
+                if (product.IsArchived)
+                {
+                    await tx.CommitAsync();
+                    return Results.Ok();
+                }
+
+                product.IsArchived = true;
+                product.ArchivedAt = DateTime.UtcNow;
+                product.ArchivedByUserId = c.UserId();
+                product.ArchiveReason = input.Reason.Trim();
+                db.AdminEvents.Add(AuditTrail.Event(
+                    c.UserId(),
+                    "ProductArchived",
+                    "Product",
+                    product.Id,
+                    $"{product.Code} kodlu ürün arşivlendi. Neden: {product.ArchiveReason}"));
+
+                try
+                {
+                    await db.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw ProductChanged();
+                }
+
+                await tx.CommitAsync();
+                return Results.Ok();
+            }
+        );
+
+        api.MapPost(
+            "/products/{id:int}/restore",
+            async (int id, ProductRestoreInput input, BusinessDbContext db, HttpContext c) =>
+            {
+                if (input is null)
+                    throw new BusinessException("Ürün sürümü gerekli.");
+                EnsureRowVersion(input.RowVersion, "Ürün sürümü geçersiz.");
+
+                await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+                var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
+                    ?? throw new BusinessException("Ürün bulunamadı.", 404);
+                EnsureProductVersion(product, input.RowVersion);
+
+                if (!product.IsArchived)
+                {
+                    await tx.CommitAsync();
+                    return Results.Ok();
+                }
+
+                product.IsArchived = false;
+                product.ArchivedAt = null;
+                product.ArchivedByUserId = null;
+                product.ArchiveReason = "";
+                db.AdminEvents.Add(AuditTrail.Event(
+                    c.UserId(),
+                    "ProductRestored",
+                    "Product",
+                    product.Id,
+                    $"{product.Code} kodlu ürün yeniden satışa açıldı."));
+
+                try
+                {
+                    await db.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw ProductChanged();
+                }
+
+                await tx.CommitAsync();
+                return Results.Ok();
+            }
+        );
+
+        api.MapPost(
             "/images",
             async (HttpRequest request, IWebHostEnvironment env) =>
             {
@@ -145,6 +331,18 @@ public static partial class AdminEndpoints
                 return Results.Ok(new { url = "/uploads/" + name });
             }
         );
+    }
+
+    private static BusinessException ProductChanged() =>
+        new(
+            "Ürün başka bir işlemde değişti. Girdilerinizi koruyarak güncel ürünü yeniden yükleyin.",
+            409,
+            "PRODUCT_CHANGED");
+
+    private static void EnsureProductVersion(Product product, byte[] version)
+    {
+        if (!product.RowVersion.AsSpan().SequenceEqual(version))
+            throw ProductChanged();
     }
 
     private static async Task ValidateProduct(ProductInput input, BusinessDbContext db)
