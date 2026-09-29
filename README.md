@@ -119,14 +119,15 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | Ekran | Yapılabilenler |
 | --- | --- |
 | Genel bakış | Ürün/bayi sayısı, bekleyen siparişler, kritik stok |
-| Ürün yönetimi | Ürün ekleme/düzenleme; kategori, fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme |
+| Ürün yönetimi | Ürün ekleme/düzenleme; fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme; ürünü neden kaydıyla arşivleme/geri açma |
+| Kategori yönetimi | Kategori ekleme/yeniden adlandırma; bir kategorinin ürünlerini hedef kategoriye taşıyarak birleştirme |
 | Bayiler | Kullanıcı arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama |
 | Sipariş yönetimi | Siparişleri arama/filtreleme, detay, onay ve red |
 | Katalog düzeni | Kolon başlığı, sırası, genişliği, hizalaması, gösterimi ve cihaz görünürlüğü |
 | Duyurular | Ana sayfa metni, arama eylemi, sıra ve yayın durumu |
 | İşlem geçmişi | Tarih, ürün, kullanıcı ve işlem türüne göre stok hareketleri ile kritik yönetici olaylarını filtreleme |
 
-PNG/JPEG/WebP görsel yükleme sınırı 4 MB'dir; dosyalar `src/U1.Business/wwwroot/uploads` klasörüne yazılır. Eski bir ürün formu açıkken başka işlem ürünü veya stoğu değiştirirse kayıt reddedilir; uyarıdan sonra güncel ürünü yükleyin. Stok sayısını değiştirmek fiziksel stok düzeltmesi anlamına gelir ve bir neden girilmesini gerektirir. Sipariş stok düşümü, red iadesi ve manuel düzeltmeler önceki/yeni bakiye ile işlem geçmişinde tutulur. Ürün silme ve kategori yönetimi yoktur.
+PNG/JPEG/WebP görsel yükleme sınırı 4 MB'dir; dosyalar `src/U1.Business/wwwroot/uploads` klasörüne yazılır. Eski bir ürün formu açıkken başka işlem ürünü veya stoğu değiştirirse kayıt reddedilir; uyarıdan sonra güncel ürünü yükleyin. Stok sayısını değiştirmek fiziksel stok düzeltmesi anlamına gelir ve bir neden girilmesini gerektirir. Sipariş stok düşümü, red iadesi ve manuel düzeltmeler önceki/yeni bakiye ile işlem geçmişinde tutulur. Ürünler fiziksel olarak silinmez; arşivlenen ürün katalogdan ve yeni siparişlerden çıkar, mevcut sepette kaldırılması gereken ürün olarak görünür. Kategori birleştirme ürünleri hedef kategoriye taşır ve eski sipariş snapshot'larını değiştirmez.
 
 Sipariş **Bekliyor → Onaylandı** veya **Bekliyor/Onaylandı → Reddedildi** yönünde değişebilir. Reddedilen sipariş yeniden açılamaz; stok yalnız bir kez iade edilir. “Onaylandı”, sevk veya fatura kesildiği anlamına gelmez.
 
@@ -211,7 +212,7 @@ GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test pr
 
 ### Doğrulanan kapsam
 
-CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün `rowversion` çakışması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
+CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün ve kategori `rowversion` çakışması, kategori birleştirme, ürün arşivleme/geri açma, arşiv ürününün katalog/sayım/sepet/checkout kuralları ve eski sipariş snapshot'ının korunması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
 
 Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması; ayrıca yönetici işlem geçmişi filtresi kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
 
