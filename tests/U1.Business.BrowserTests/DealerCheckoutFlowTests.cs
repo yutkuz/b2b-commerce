@@ -360,6 +360,7 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
             await Page.GotoAsync($"{application.BaseUrl}/#catalog");
             await Page.GetByLabel("Ürün ara").FillAsync("DG-001");
+            await Expect(Page.Locator("tbody tr")).ToHaveCountAsync(1);
 
             var productButton = Page.Locator("tbody tr")
                 .Filter(new() { HasText = "DG-001" })
