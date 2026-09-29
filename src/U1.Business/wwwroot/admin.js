@@ -13,7 +13,7 @@ import {
   submitCategoryUpdate,
   submitCategoryMerge,
 } from "./admin/categories.js?v=20260929b";
-import { history } from "./admin/history.js?v=20260929a";
+import { history } from "./admin/history.js?v=20260929b";
 import {
   userList,
   showUserEditor,
