@@ -118,7 +118,7 @@ public sealed class GridColumnUpdateInput
     public byte[] RowVersion { get; set; } = [];
 }
 
-public sealed class BannerInput
+public class BannerInput
 {
     [Required, StringLength(100)]
     public string Title { get; set; } = "";
