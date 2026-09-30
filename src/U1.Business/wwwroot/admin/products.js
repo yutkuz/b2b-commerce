@@ -12,6 +12,8 @@ import {
   pager,
   toast,
   go,
+  modal,
+  closeModal,
 } from "../app-core.js?v=20260928a";
 import { adminSearch, selectField } from "./ui.js?v=20260928b";
 
@@ -29,6 +31,9 @@ export async function products() {
       "Ürün yönetimi",
       "Ürün bilgilerini, fiyatları ve stokları güncelleyin.",
       /* HTML */ `<a class="button" href="#admin-categories">Kategori yönetimi</a>
+        <button class="button" type="button" data-action="preview-image-cleanup">
+          ${icon("trash")} Görsel temizliği
+        </button>
         <a class="button primary" href="#admin-product"
         >${icon("plus")} Yeni ürün</a
       >`,
@@ -267,4 +272,63 @@ export async function restoreProduct(element, render) {
   state.meta = null;
   await render();
   toast("Ürün yeniden satışa açıldı.");
+}
+
+export async function previewImageCleanup() {
+  const data = await api("/admin/images/cleanup-preview");
+  const rows = data.items.length
+    ? data.items
+        .map(
+          (item) => /* HTML */ `<label class="field">
+            <span>
+              <input
+                type="checkbox"
+                data-cleanup-image
+                value="${esc(item.url)}"
+                ${item.canDelete ? "" : "disabled"}
+              />
+              <code>${esc(item.url)}</code>
+            </span>
+            <small>
+              ${Math.ceil(item.sizeBytes / 1024)} KB ·
+              ${item.canDelete
+                ? "silinmeye hazır"
+                : "yeni yükleme; bekleme süresi devam ediyor"}
+            </small>
+          </label>`,
+        )
+        .join("")
+    : empty(
+        "Kullanılmayan görsel yok.",
+        "Ürünlerin kullandığı dosyalar listelenmez.",
+      );
+
+  modal(
+    "Görsel temizliği",
+    /* HTML */ `<div class="notice">
+        Önizlemeyi kontrol edin. Silme geri alınmaz; önce uploads ve veritabanı yedeğinizin güncel olduğundan emin olun.
+      </div>
+      <div class="form-grid">${rows}</div>
+      <div class="form-actions">
+        <button class="button" type="button" data-action="close">Kapat</button>
+        <button class="button primary" type="button" data-action="cleanup-images">
+          Seçilenleri temizle
+        </button>
+      </div>`,
+  );
+}
+
+export async function cleanupImages(_element, render) {
+  const urls = [
+    ...document.querySelectorAll("#dialog [data-cleanup-image]:checked"),
+  ].map((input) => input.value);
+  if (!urls.length) throw new Error("Temizlenecek en az bir görsel seçin.");
+
+  const result = await api("/admin/images/cleanup", {
+    method: "POST",
+    body: { urls },
+  });
+  closeModal();
+  await render();
+  toast(`${result.deleted} kullanılmayan görsel temizlendi.`);
 }
