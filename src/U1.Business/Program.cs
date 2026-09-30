@@ -19,6 +19,7 @@ builder.Services.AddDbContextFactory<BusinessDbContext>((sp, options) =>
     options.UseSqlServer(connectionString);
 });
 builder.Services.AddSingleton<Database>();
+builder.Services.AddSingleton<ProductImageStorage>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddAntiforgery(options =>
