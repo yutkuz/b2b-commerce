@@ -228,7 +228,7 @@ public static partial class AdminEndpoints
                 EnsureRowVersion(input.RowVersion, "Ürün sürümü geçersiz.");
 
                 await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-                var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
+                var product = await LockProductForWrite(db, id)
                     ?? throw new BusinessException("Ürün bulunamadı.", 404);
                 EnsureProductVersion(product, input.RowVersion);
 
@@ -272,7 +272,7 @@ public static partial class AdminEndpoints
                 EnsureRowVersion(input.RowVersion, "Ürün sürümü geçersiz.");
 
                 await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-                var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
+                var product = await LockProductForWrite(db, id)
                     ?? throw new BusinessException("Ürün bulunamadı.", 404);
                 EnsureProductVersion(product, input.RowVersion);
 
@@ -332,6 +332,11 @@ public static partial class AdminEndpoints
             }
         );
     }
+
+    private static Task<Product?> LockProductForWrite(BusinessDbContext db, int id) =>
+        db.Products
+            .FromSqlInterpolated($"SELECT * FROM Products WITH(UPDLOCK,HOLDLOCK) WHERE Id={id}")
+            .SingleOrDefaultAsync();
 
     private static BusinessException ProductChanged() =>
         new(

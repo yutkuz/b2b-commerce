@@ -15,6 +15,118 @@ namespace U1.Business.BrowserTests;
 public sealed class DealerCheckoutFlowTests : PageTest
 {
     [Fact]
+    public async Task Category_management_archive_and_dealer_cart_recovery_work_in_browser()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-categories");
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var sourceName = "Tarayıcı kaynak " + suffix;
+            var targetName = "Tarayıcı hedef " + suffix;
+            var code = "R10-BR-" + suffix.ToUpperInvariant();
+            ILocator CategoryRow(string name) =>
+                Page.Locator($"tbody tr:has(td:first-child b:text-is(\"{name}\"))");
+
+            foreach (var name in new[] { sourceName, targetName })
+            {
+                await Page.Locator("#new-category-name").FillAsync(name);
+                await Page.GetByRole(AriaRole.Button, new() { Name = "Kategori ekle" }).ClickAsync();
+                await Expect(CategoryRow(name)).ToBeVisibleAsync();
+            }
+
+            using var adminApi = await LoginApiAsync(application, "admin@u1.local", "U1Admin!2026");
+            async Task<JsonElement> Categories() => await adminApi.Client.GetFromJsonAsync<JsonElement>(
+                "/api/admin/categories", TestContext.Current.CancellationToken);
+            var categories = await Categories();
+            var source = categories.EnumerateArray().Single(x => x.GetProperty("name").GetString() == sourceName);
+            var target = categories.EnumerateArray().Single(x => x.GetProperty("name").GetString() == targetName);
+            var sourceId = source.GetProperty("id").GetInt32();
+            var targetId = target.GetProperty("id").GetInt32();
+            using var createProduct = await SendJsonAsync(adminApi, HttpMethod.Post, "/api/admin/products", new
+            {
+                code,
+                name = "Tarayıcı yarış ürünü",
+                description = "R10 browser",
+                brand = "CI",
+                manufacturerCode = "CI",
+                imageUrl = "/images/product.svg",
+                stock = 4,
+                criticalStock = 1,
+                price = 100m,
+                categoryId = sourceId
+            });
+            createProduct.EnsureSuccessStatusCode();
+            var created = await createProduct.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            var productId = created.GetProperty("id").GetInt32();
+
+            var renamed = sourceName + " yeni";
+            var sourceRow = CategoryRow(sourceName);
+            await sourceRow.Locator("input[name=name]").FillAsync(renamed);
+            await sourceRow.GetByRole(AriaRole.Button, new() { Name = "Kaydet" }).ClickAsync();
+            sourceRow = CategoryRow(renamed);
+            await Expect(sourceRow).ToBeVisibleAsync();
+
+            var draft = renamed + " taslak";
+            await sourceRow.Locator("input[name=name]").FillAsync(draft);
+            categories = await Categories();
+            source = categories.EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == sourceId);
+            var remoteName = renamed + " uzaktan";
+            using var remoteUpdate = await SendJsonAsync(adminApi, HttpMethod.Put,
+                $"/api/admin/categories/{sourceId}", new
+                {
+                    name = remoteName,
+                    rowVersion = source.GetProperty("rowVersion").GetString()
+                });
+            remoteUpdate.EnsureSuccessStatusCode();
+            await sourceRow.GetByRole(AriaRole.Button, new() { Name = "Kaydet" }).ClickAsync();
+            await Expect(Page.Locator(".toast.error")).ToContainTextAsync("Kategori başka bir işlemde değişti");
+            await Expect(sourceRow.Locator("input[name=name]")).ToHaveValueAsync(draft);
+
+            await Page.ReloadAsync();
+            sourceRow = CategoryRow(remoteName);
+            await Expect(sourceRow).ToBeVisibleAsync();
+            await sourceRow.Locator("select[name=target]").SelectOptionAsync(
+                new SelectOptionValue { Label = targetName });
+            await sourceRow.GetByRole(AriaRole.Button, new() { Name = "Birleştir" }).ClickAsync();
+            await Expect(CategoryRow(remoteName)).ToHaveCountAsync(0);
+            await Expect(CategoryRow(targetName)).ToContainTextAsync("1");
+
+            await LogoutAsync();
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await AddProductAsync(application, code);
+            await LogoutAsync();
+
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-product?id={productId}");
+            await Page.GetByLabel("Arşivleme nedeni").FillAsync("R10 tarayıcı testi");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Ürünü arşivle" }).ClickAsync();
+            await Expect(Page.GetByText("Ürün arşivde.")).ToBeVisibleAsync();
+            await LogoutAsync();
+
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#cart");
+            await Expect(Page.GetByText("Artık satışta değil · Sepetten çıkarın")).ToBeVisibleAsync();
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Tarayıcı yarış ürünü sepetten çıkar" })
+                .ClickAsync();
+            await Expect(Page.GetByText("Sepetiniz henüz boş.")).ToBeVisibleAsync();
+            await LogoutAsync();
+
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-product?id={productId}");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Yeniden satışa aç" }).ClickAsync();
+            await Expect(Page.GetByRole(AriaRole.Button, new() { Name = "Ürünü arşivle" })).ToBeVisibleAsync();
+
+            categories = await Categories();
+            Assert.DoesNotContain(categories.EnumerateArray(), x => x.GetProperty("id").GetInt32() == sourceId);
+            Assert.Contains(categories.EnumerateArray(), x => x.GetProperty("id").GetInt32() == targetId);
+        });
+    }
+
+    [Fact]
     public async Task Lost_checkout_response_keeps_the_same_request_id_after_reload()
     {
         await using var application =
