@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using U1.Business.Data;
 using U1.Business.Domain;
 using U1.Business.Services;
@@ -68,8 +70,12 @@ public static partial class AdminEndpoints
 
                 if (input.Version <= 0)
                     throw new BusinessException("Kullanıcı sürümü gerekli.");
-                if (u.Role == "Admin" && !input.IsActive)
-                    throw new BusinessException("Yönetici hesabı bu ekrandan pasifleştirilemez.");
+                if (u.Role == "Admin" && !input.IsActive && c.UserId() == id)
+                    throw new BusinessException(
+                        "Kendi yönetici hesabınızı bu ekrandan pasifleştiremezsiniz.",
+                        409,
+                        "ADMIN_SELF_DEACTIVATE"
+                    );
 
                 string? passwordHash = null;
                 if (!string.IsNullOrEmpty(input.NewPassword))
@@ -88,6 +94,32 @@ public static partial class AdminEndpoints
                 var version = input.Version;
                 var target = db.Users.Where(x => x.Id == id && x.AuthVersion == version);
                 await using var tx = await db.Database.BeginTransactionAsync();
+
+                if (u.Role == "Admin" && u.IsActive && !isActive)
+                {
+                    var lockResult = await SqlApplicationLock.AcquireAsync(
+                        (SqlConnection)db.Database.GetDbConnection(),
+                        (SqlTransaction)tx.GetDbTransaction(),
+                        "U1Business:active-admin-deactivation",
+                        "Transaction",
+                        10000
+                    );
+                    if (lockResult < 0)
+                        throw new BusinessException(
+                            "Yönetici hesabı şu anda güncellenemiyor. Lütfen tekrar deneyin.",
+                            503,
+                            "ADMIN_RETRY"
+                        );
+
+                    var activeAdmins = await db.Users.AsNoTracking()
+                        .CountAsync(x => x.Role == "Admin" && x.IsActive);
+                    if (activeAdmins <= 1)
+                        throw new BusinessException(
+                            "Son aktif yönetici hesabı pasifleştirilemez.",
+                            409,
+                            "LAST_ADMIN"
+                        );
+                }
 
                 int updated;
                 if (passwordHash is null)

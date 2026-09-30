@@ -121,7 +121,7 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | Genel bakış | Ürün/bayi sayısı, bekleyen siparişler, kritik stok |
 | Ürün yönetimi | Ürün ekleme/düzenleme; fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme; ürünü neden kaydıyla arşivleme/geri açma |
 | Kategori yönetimi | Kategori ekleme/yeniden adlandırma; bir kategorinin ürünlerini hedef kategoriye taşıyarak birleştirme |
-| Bayiler | Kullanıcı arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama |
+| Kullanıcılar | Hesap arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama; son aktif yönetici ve kendi hesabını kapatma koruması |
 | Sipariş yönetimi | Siparişleri arama/filtreleme, durum geçmişi, onay/hazırlama/sevk/teslim, gerekçeli ret/iptal ve yalnız yöneticiye açık not |
 | Katalog düzeni | Kolon başlığı, sırası, genişliği, hizalaması, gösterimi ve cihaz görünürlüğü |
 | Duyurular | Ana sayfa metni, arama eylemi, sıra ve yayın durumu |
@@ -212,7 +212,7 @@ GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test pr
 
 ### Doğrulanan kapsam
 
-CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün ve kategori `rowversion` çakışması, kategori birleştirme, ürün arşivleme/geri açma, arşiv ürününün katalog/sayım/sepet/checkout kuralları ve eski sipariş snapshot'ının korunması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red/iptal sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçersiz sipariş durumları, gizli yönetici notu, güncel fiyat ve satış durumuyla yeniden sepete ekleme, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
+CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün ve kategori `rowversion` çakışması, kategori birleştirme, ürün arşivleme/geri açma, arşiv ürününün katalog/sayım/sepet/checkout kuralları ve eski sipariş snapshot'ının korunması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red/iptal sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçersiz sipariş durumları, gizli yönetici notu, güncel fiyat ve satış durumuyla yeniden sepete ekleme, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, yönetici pasifleştirmede son aktif hesap ve eşzamanlılık koruması, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
 
 Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması; kategori/arşiv akışları, eski siparişten sepete ekleme, siparişin yazdırma düzeninden PDF üretimi ve yönetici notunun bayiye gösterilmemesi kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
 

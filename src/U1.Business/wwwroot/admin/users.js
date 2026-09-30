@@ -21,7 +21,7 @@ export async function userList() {
   const d = await api("/admin/users?" + state.params);
   users = d.items;
   return (
-    heading("Bayiler", "Bayi hesaplarını ve iletişim bilgilerini yönetin.") +
+    heading("Kullanıcılar", "Hesapları ve iletişim bilgilerini yönetin.") +
     /* HTML */ `<section class="panel">
       <form class="toolbar" data-form="admin-search">
         ${adminSearch("Ad, firma veya e-posta ara…")}
@@ -82,7 +82,7 @@ export async function userList() {
 export function showUserEditor(el) {
   const u = users.find((x) => x.id === +el.dataset.id);
   modal(
-    "Bayi bilgilerini düzenle",
+    "Kullanıcı bilgilerini düzenle",
     /* HTML */ `<form
       data-form="user"
       data-id="${u.id}"
@@ -99,13 +99,14 @@ export function showUserEditor(el) {
           type="checkbox"
           name="isActive"
           ${u.isActive ? "checked" : ""}
-          ${u.role === "Admin" ? "disabled" : ""}
+          ${u.id === state.user.id ? "disabled" : ""}
         />Hesap aktif</label
       >
       <p class="muted">
         <small
-          >Şifreler görüntülenmez. Değişiklikten sonra kullanıcının yeniden
-          giriş yapması gerekir.</small
+          >Şifreler görüntülenmez. Yönetici hesabı ancak başka bir aktif yönetici
+          varsa pasifleştirilebilir; kendi hesabınızı kapatamazsınız.
+          Değişiklikten sonra kullanıcının yeniden giriş yapması gerekir.</small
         >
       </p>
       <div class="form-actions">
@@ -136,7 +137,7 @@ export async function submitUser(form, data, render) {
     throw error;
   }
   closeModal();
-  toast("Bayi bilgileri kaydedildi.");
+  toast("Kullanıcı bilgileri kaydedildi.");
   if (+form.dataset.id === state.user.id) {
     state.user = null;
     go("login");
