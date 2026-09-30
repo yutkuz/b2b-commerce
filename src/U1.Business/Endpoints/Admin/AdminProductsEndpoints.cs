@@ -309,7 +309,7 @@ public static partial class AdminEndpoints
 
         api.MapPost(
             "/images",
-            async (HttpRequest request, IWebHostEnvironment env) =>
+            async (HttpRequest request, ProductImageStorage storage) =>
             {
                 if (!request.HasFormContentType || request.ContentLength > 5 * 1024 * 1024)
                     throw new BusinessException(
@@ -324,11 +324,62 @@ public static partial class AdminEndpoints
                 await file.CopyToAsync(ms, request.HttpContext.RequestAborted);
                 var bytes = ms.ToArray();
                 var ext = ProductImageValidator.Validate(bytes);
-                var name = Guid.NewGuid().ToString("N") + ext;
-                var folder = Path.Combine(env.WebRootPath, "uploads");
-                Directory.CreateDirectory(folder);
-                await File.WriteAllBytesAsync(Path.Combine(folder, name), bytes);
-                return Results.Ok(new { url = "/uploads/" + name });
+                var url = await storage.SaveAsync(
+                    bytes,
+                    ext,
+                    request.HttpContext.RequestAborted);
+                return Results.Ok(new { url });
+            }
+        ).RequireRateLimiting("image-upload");
+
+        api.MapGet(
+            "/images/cleanup-preview",
+            async (BusinessDbContext db, ProductImageStorage storage, HttpContext c) =>
+            {
+                var references = (await db.Products
+                        .AsNoTracking()
+                        .Where(x => x.ImageUrl.StartsWith("/uploads/"))
+                        .Select(x => x.ImageUrl)
+                        .ToListAsync(c.RequestAborted))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var items = await storage.PreviewCleanupAsync(references, c.RequestAborted);
+                return Results.Ok(new { items });
+            }
+        );
+
+        api.MapPost(
+            "/images/cleanup",
+            async (
+                ImageCleanupInput input,
+                BusinessDbContext db,
+                ProductImageStorage storage,
+                HttpContext c) =>
+            {
+                if (input is null || input.Urls is null || input.Urls.Length == 0)
+                    throw new BusinessException("Temizlenecek en az bir görsel seçin.");
+                if (input.Urls.Length > storage.CleanupBatchLimit)
+                    throw new BusinessException(
+                        $"Tek işlemde en fazla {storage.CleanupBatchLimit} görsel temizlenebilir.");
+
+                var references = (await db.Products
+                        .AsNoTracking()
+                        .Where(x => x.ImageUrl.StartsWith("/uploads/"))
+                        .Select(x => x.ImageUrl)
+                        .ToListAsync(c.RequestAborted))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var deleted = await storage.DeleteUnusedAsync(
+                    input.Urls,
+                    references,
+                    c.RequestAborted);
+                db.AdminEvents.Add(AuditTrail.Event(
+                    c.UserId(),
+                    "ImageCleanup",
+                    "UploadStorage",
+                    null,
+                    $"{deleted.Count} kullanılmayan ürün görseli kontrollü temizlikle silindi."));
+                await db.SaveChangesAsync(c.RequestAborted);
+                return Results.Ok(new { deleted = deleted.Count });
             }
         ).RequireRateLimiting("image-upload");
     }
