@@ -87,34 +87,34 @@ export async function userList() {
 }
 
 function dealerGroupPanel() {
-  return /* HTML */ \`<section class="panel">
+  return /* HTML */ `<section class="panel">
     <div class="section-title">
       <div><h2>Bayi grupları</h2><p class="muted">Her bayi grubuna tek yüzde iskonto uygulanır.</p></div>
     </div>
     <form class="toolbar" data-form="dealer-group-create">
-      \${field("Yeni grup adı", "name", "", "text", 'required maxlength="80"')}
-      \${field("İskonto (%)", "discountPercent", "0", "number", 'required min="0" max="100" step="0.01"')}
+      ${field("Yeni grup adı", "name", "", "text", 'required maxlength="80"')}
+      ${field("İskonto (%)", "discountPercent", "0", "number", 'required min="0" max="100" step="0.01"')}
       <button class="button primary" type="submit">Grup ekle</button>
     </form>
     <div class="table-scroll">
       <table class="data-table">
         <thead><tr><th>Grup</th><th>İskonto</th><th>Bayi</th><th></th></tr></thead>
         <tbody>
-          \${dealerGroups.map((group) => \`
+          ${dealerGroups.map((group) => `
             <tr>
               <td colspan="4">
-                <form class="toolbar" data-form="dealer-group-update" data-id="\${group.id}" data-version="\${esc(group.rowVersion)}">
-                  \${field("Grup adı", "name", group.name, "text", 'required maxlength="80"')}
-                  \${field("İskonto (%)", "discountPercent", group.discountPercent, "number", 'required min="0" max="100" step="0.01"')}
-                  <span class="muted">\${group.dealerCount} bayi</span>
+                <form class="toolbar" data-form="dealer-group-update" data-id="${group.id}" data-version="${esc(group.rowVersion)}">
+                  ${field("Grup adı", "name", group.name, "text", 'required maxlength="80"')}
+                  ${field("İskonto (%)", "discountPercent", group.discountPercent, "number", 'required min="0" max="100" step="0.01"')}
+                  <span class="muted">${group.dealerCount} bayi</span>
                   <button class="button" type="submit">Kaydet</button>
                 </form>
               </td>
-            </tr>\`).join("")}
+            </tr>`).join("")}
         </tbody>
       </table>
     </div>
-  </section>\`;
+  </section>`;
 }
 
 export function showUserEditor(el) {
@@ -132,13 +132,13 @@ export function showUserEditor(el) {
           ${field("Firma adı", "company", u.company, "text", 'maxlength="180"')}${field("Yeni şifre (isteğe bağlı)", "newPassword", "", "password", 'minlength="10" maxlength="128" autocomplete="new-password" placeholder="Değiştirmek istemiyorsanız boş bırakın"')}
         </div>
       </div>
-        \${u.role === "Dealer"
-          ? \`<div class="full">\${selectField(
+        ${u.role === "Dealer"
+          ? `<div class="full">${selectField(
               "Bayi grubu",
               "dealerGroupId",
-              dealerGroups.map((group) => [group.id, \`\${group.name} · %\${group.discountPercent}\`]),
+              dealerGroups.map((group) => [group.id, `${group.name} · %${group.discountPercent}`]),
               u.dealerGroupId,
-            )}</div>\`
+            )}</div>`
           : ""}
       <label class="check-row"
         ><input
