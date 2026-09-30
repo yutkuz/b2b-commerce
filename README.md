@@ -242,6 +242,6 @@ Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipa
 
 Gerçek parolalar, yerel bağlantı ayarları, yüklenen görseller ve derleme çıktıları Git'e alınmaz.
 
-Yüklenen ürün görselleri otomatik olarak silinmez. Yetim görsel temizliğinde önce yedek alın; veritabanındaki `Products.ImageUrl` alanlarında `/uploads/` ile başlayan dosyaları referans kümesi kabul edin ve yalnızca hiçbir ürün tarafından referans edilmeyen dosyaları silin. Bir ürünün kullandığı görsel hiçbir toplu temizlik işleminde silinmemelidir.
+Yüklenen ürün görselleri toplam depolama kotası ve asgari boş disk alanı ile korunur; değerler `ImageStorage` ayarlarından değiştirilebilir. Yönetim ekranındaki **Görsel temizliği** önce yalnız kullanılmayan dosyaları önizler; yeni yüklenen ve henüz ürüne bağlanmamış dosyalar bekleme süresi dolmadan seçilemez. Temizlikten önce veritabanı ile `wwwroot/uploads` klasörünü birlikte yedekleyin. Silinen dosyalar uygulama içinden geri alınmaz; geri dönüşte aynı yedekten dosyayı özgün adına geri koyun ve ürün referansını doğrulayın. Kullanılan dosyalar, uploads dışına çıkan yollar ve bağlantı/reparse-point hedefleri temizlenmez.
 
 Temiz bir klonda `dotnet restore`, Release build ve iki .NET test projesi ile doğrulama yapılabilir; önceki `bin`/`obj` çıktıları gerekli değildir.
