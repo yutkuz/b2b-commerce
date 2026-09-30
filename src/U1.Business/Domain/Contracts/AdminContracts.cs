@@ -83,3 +83,8 @@ public sealed class ProductRestoreInput
 {
     public byte[] RowVersion { get; set; } = [];
 }
+
+public sealed class ImageCleanupInput
+{
+    public string[] Urls { get; set; } = [];
+}
