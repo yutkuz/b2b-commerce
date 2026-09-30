@@ -20,7 +20,9 @@ import {
   userList,
   showUserEditor,
   submitUser,
-} from "./admin/users.js?v=20260930a";
+  submitDealerGroupCreate,
+  submitDealerGroupUpdate,
+} from "./admin/users.js?v=20261001a";
 import { orderList } from "./admin/orders.js?v=20260930a";
 import { grid, submitGrid } from "./admin/grid.js?v=20260928b";
 import {
@@ -85,6 +87,8 @@ export async function adminSubmit(kind, form, data, { render }) {
   if (kind === "category-update") return submitCategoryUpdate(form, data, render);
   if (kind === "category-merge") return submitCategoryMerge(form, data, render);
   if (kind === "user") return submitUser(form, data, render);
+  if (kind === "dealer-group-create") return submitDealerGroupCreate(data, render);
+  if (kind === "dealer-group-update") return submitDealerGroupUpdate(form, data, render);
   if (kind === "grid") return submitGrid(form, render);
   if (kind === "banner") return submitBanner(form, data, render);
 }

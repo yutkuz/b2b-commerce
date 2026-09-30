@@ -1,4 +1,4 @@
-import { renderAdmin } from './admin.js?v=20260930c';
+import { renderAdmin } from './admin.js?v=20261001a';
 import {
     portalRoutes,
     publicRoutes,

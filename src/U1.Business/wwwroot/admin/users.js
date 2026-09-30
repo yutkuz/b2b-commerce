@@ -12,14 +12,19 @@ import {
   toast,
   go,
 } from "../app-core.js?v=20260928a";
-import { adminSearch } from "./ui.js?v=20260928b";
+import { adminSearch, selectField } from "./ui.js?v=20260928b";
 
 let users = [];
+let dealerGroups = [];
 
 export async function userList() {
   const page = +(state.params.get("page") || 1);
-  const d = await api("/admin/users?" + state.params);
+  const [d, groupData] = await Promise.all([
+    api("/admin/users?" + state.params),
+    api("/admin/dealer-groups"),
+  ]);
   users = d.items;
+  dealerGroups = groupData.items;
   return (
     heading("Kullanıcılar", "Hesapları ve iletişim bilgilerini yönetin.") +
     /* HTML */ `<section class="panel">
@@ -36,6 +41,7 @@ export async function userList() {
                     <th>E-posta</th>
                     <th>Telefon</th>
                     <th>Rol</th>
+                    <th>Bayi grubu</th>
                     <th>Durum</th>
                     <th></th>
                   </tr>
@@ -52,6 +58,7 @@ export async function userList() {
                           <td>${esc(u.email)}</td>
                           <td>${esc(u.phone)}</td>
                           <td>${u.role === "Admin" ? "Yönetici" : "Bayi"}</td>
+                          <td>${u.role === "Dealer" ? esc(u.dealerGroupName || "—") : "—"}</td>
                           <td>
                             <span
                               class="status-badge ${u.isActive ? "approved" : "rejected"}"
@@ -75,8 +82,39 @@ export async function userList() {
             </div>`
           : empty("Kullanıcı bulunamadı.", "Arama kelimenizi değiştirin.")
       }${pager(d.total, page)}
-    </section>`
+    </section>` + dealerGroupPanel()
   );
+}
+
+function dealerGroupPanel() {
+  return /* HTML */ \`<section class="panel">
+    <div class="section-title">
+      <div><h2>Bayi grupları</h2><p class="muted">Her bayi grubuna tek yüzde iskonto uygulanır.</p></div>
+    </div>
+    <form class="toolbar" data-form="dealer-group-create">
+      \${field("Yeni grup adı", "name", "", "text", 'required maxlength="80"')}
+      \${field("İskonto (%)", "discountPercent", "0", "number", 'required min="0" max="100" step="0.01"')}
+      <button class="button primary" type="submit">Grup ekle</button>
+    </form>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Grup</th><th>İskonto</th><th>Bayi</th><th></th></tr></thead>
+        <tbody>
+          \${dealerGroups.map((group) => \`
+            <tr>
+              <td colspan="4">
+                <form class="toolbar" data-form="dealer-group-update" data-id="\${group.id}" data-version="\${esc(group.rowVersion)}">
+                  \${field("Grup adı", "name", group.name, "text", 'required maxlength="80"')}
+                  \${field("İskonto (%)", "discountPercent", group.discountPercent, "number", 'required min="0" max="100" step="0.01"')}
+                  <span class="muted">\${group.dealerCount} bayi</span>
+                  <button class="button" type="submit">Kaydet</button>
+                </form>
+              </td>
+            </tr>\`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </section>\`;
 }
 
 export function showUserEditor(el) {
@@ -94,6 +132,14 @@ export function showUserEditor(el) {
           ${field("Firma adı", "company", u.company, "text", 'maxlength="180"')}${field("Yeni şifre (isteğe bağlı)", "newPassword", "", "password", 'minlength="10" maxlength="128" autocomplete="new-password" placeholder="Değiştirmek istemiyorsanız boş bırakın"')}
         </div>
       </div>
+        \${u.role === "Dealer"
+          ? \`<div class="full">\${selectField(
+              "Bayi grubu",
+              "dealerGroupId",
+              dealerGroups.map((group) => [group.id, \`\${group.name} · %\${group.discountPercent}\`]),
+              u.dealerGroupId,
+            )}</div>\`
+          : ""}
       <label class="check-row"
         ><input
           type="checkbox"
@@ -120,6 +166,7 @@ export function showUserEditor(el) {
 export async function submitUser(form, data, render) {
   data.isActive = form.querySelector("[name=isActive]").checked;
   data.version = +form.dataset.version;
+  if (data.dealerGroupId) data.dealerGroupId = Number(data.dealerGroupId);
   try {
     await api("/admin/users/" + form.dataset.id, {
       method: "PUT",
@@ -143,4 +190,32 @@ export async function submitUser(form, data, render) {
     go("login");
   } else await render();
   return;
+}
+
+
+export async function submitDealerGroupCreate(data, render) {
+  data.discountPercent = Number(data.discountPercent);
+  await api("/admin/dealer-groups", { method: "POST", body: data });
+  toast("Bayi grubu oluşturuldu.");
+  await render();
+}
+
+export async function submitDealerGroupUpdate(form, data, render) {
+  data.discountPercent = Number(data.discountPercent);
+  data.rowVersion = form.dataset.version;
+  try {
+    await api("/admin/dealer-groups/" + form.dataset.id, {
+      method: "PUT",
+      body: data,
+    });
+  } catch (error) {
+    if (error.code === "DEALER_GROUP_CHANGED") {
+      toast("Bayi grubu başka bir işlemde değişti. Güncel değerler yüklendi.", true);
+      await render();
+      return;
+    }
+    throw error;
+  }
+  toast("Bayi grubu güncellendi.");
+  await render();
 }
