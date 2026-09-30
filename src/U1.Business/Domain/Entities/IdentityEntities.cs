@@ -12,4 +12,5 @@ public sealed class User
     public string Role { get; set; } = "Dealer";
     public bool IsActive { get; set; }
     public int AuthVersion { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }

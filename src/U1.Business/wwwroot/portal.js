@@ -1,5 +1,5 @@
 import { company, documents } from './content.js?v=20260923f';
-import { state, esc, icon, money, heading } from './app-core.js?v=20260928a';
+import { state, esc, icon, money, heading, field } from './app-core.js?v=20260928a';
 
 export const portalRoutes = {
     'new-products': ['Yeni ürünler', 'grid'],
@@ -73,7 +73,30 @@ export function renderPortalPage() {
     const route = state.route;
     if (route === 'account') {
         const u = state.user;
-        return heading('Hesabım', 'Firma, iletişim ve cari hesap bilgileriniz.') + `<div class="account-layout"><section class="panel account-card"><div class="section-title"><h2>Bayi bilgileri</h2><span class="status-badge approved">Aktif hesap</span></div><dl class="account-fields">${[['Firma',u.company || 'Belirtilmedi'],['Yetkili',u.firstName+' '+u.lastName],['E-posta',u.email],['Telefon',u.phone],['Hesap türü',u.role === 'Admin' ? 'Yönetici' : 'Bayi']].map(([k,v])=>`<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl><p class="account-hint">Bilgilerinizi güncellemek için firma yöneticinizle iletişime geçin.</p></section><section class="panel account-card"><div class="section-title"><h2>Cari hesap</h2></div><div class="balance-state"><span>Toplam bakiye</span><strong>—</strong><p>Cari hesap bilgisi henüz paylaşılmadı. Borç ve alacak tutarlarını firma yetkilinizden öğrenebilirsiniz.</p><a class="button" href="#orders">Siparişlerimi görüntüle ${icon('arrow')}</a></div></section></div>`;
+        return heading('Hesabım', 'Firma ve iletişim bilgilerinizi güncelleyin.') +
+            `<div class="account-layout">
+                <section class="panel account-card">
+                    <div class="section-title"><h2>Profil bilgileri</h2><span class="status-badge approved">Aktif hesap</span></div>
+                    <form data-form="profile" data-version="${esc(u.rowVersion || '')}">
+                        <div class="form-grid">
+                            ${field('Ad', 'firstName', u.firstName, 'text', 'required maxlength="80" autocomplete="given-name"')}
+                            ${field('Soyad', 'lastName', u.lastName, 'text', 'required maxlength="80" autocomplete="family-name"')}
+                            <div class="full">${field('Firma adı', 'company', u.company || '', 'text', 'maxlength="180" autocomplete="organization"')}</div>
+                            <div class="full">${field('Telefon', 'phone', u.phone, 'tel', 'required maxlength="25" autocomplete="tel"')}</div>
+                        </div>
+                        <dl class="account-fields">
+                            <div><dt>E-posta</dt><dd>${esc(u.email)}</dd></div>
+                            <div><dt>Hesap türü</dt><dd>${u.role === 'Admin' ? 'Yönetici' : 'Bayi'}</dd></div>
+                        </dl>
+                        <p class="account-hint">E-posta, hesap türü ve aktiflik bu ekrandan değiştirilemez.</p>
+                        <div class="form-actions"><button class="button primary" type="submit">${icon('check')} Bilgileri kaydet</button></div>
+                    </form>
+                </section>
+                <section class="panel account-card">
+                    <div class="section-title"><h2>Cari hesap</h2></div>
+                    <div class="balance-state"><span>Toplam bakiye</span><strong>—</strong><p>Cari hesap bilgisi henüz paylaşılmadı. Borç ve alacak tutarlarını firma yetkilinizden öğrenebilirsiniz.</p><a class="button" href="#orders">Siparişlerimi görüntüle ${icon('arrow')}</a></div>
+                </section>
+            </div>`;
     }
     if (route === 'payment') {
         return heading('Online ödeme', 'Bayi hesabınıza ait ödeme işlemleri.') + informationPanel('card','Online ödeme henüz kullanıma açılmadı.','Bu portal üzerinden şu anda kartla ödeme alınmıyor. Siparişlerinizi oluşturmaya devam edebilirsiniz. Ödeme yöntemi için firma yetkilinizle iletişime geçin.',`<div class="information-actions"><a class="button primary" href="#cart">Sepetime git ${icon('arrow')}</a><a class="button" href="#banks">Banka bilgileri</a></div>`);

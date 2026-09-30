@@ -333,6 +333,14 @@ async function submitOrderAdminNote(form, data) {
     toast('Yönetici notu kaydedildi.');
 }
 
+async function submitProfile(form, data) {
+    data.rowVersion = form.dataset.version;
+    state.user = await api('/auth/profile', { method: 'PUT', body: data });
+    form.dataset.version = state.user.rowVersion;
+    await renderPage();
+    toast('Profil bilgileriniz kaydedildi.');
+}
+
 async function handleSubmit(event) {
     const form = event.target;
 
@@ -383,6 +391,10 @@ async function handleSubmit(event) {
 
             case 'order-admin-note':
                 await submitOrderAdminNote(form, data);
+                return;
+
+            case 'profile':
+                await submitProfile(form, data);
                 return;
 
             default:

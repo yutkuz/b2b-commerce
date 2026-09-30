@@ -35,6 +35,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Company).HasMaxLength(180);
             entity.Property(x => x.PasswordHash).HasMaxLength(500);
             entity.Property(x => x.Role).HasMaxLength(12).IsUnicode(false);
+            entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => x.Email).IsUnique();
         });
 

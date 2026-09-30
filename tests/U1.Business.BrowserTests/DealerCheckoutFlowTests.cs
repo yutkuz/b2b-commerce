@@ -579,6 +579,62 @@ public sealed class DealerCheckoutFlowTests : PageTest
     }
 
     [Fact]
+    public async Task Account_profile_stale_form_keeps_draft_and_reloads_remote_value()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#account");
+            var firstName = Page.GetByLabel("Ad", new() { Exact = true });
+            var originalName = await firstName.InputValueAsync();
+            var originalLastName = await Page.GetByLabel("Soyad").InputValueAsync();
+            var originalCompany = await Page.GetByLabel("Firma adı").InputValueAsync();
+            var originalPhone = await Page.GetByLabel("Telefon").InputValueAsync();
+            var draftName = "Taslak-" + Guid.NewGuid().ToString("N")[..6];
+            var remoteName = "Uzaktan-" + Guid.NewGuid().ToString("N")[..6];
+
+            using var api = await LoginApiAsync(application, "bayi@u1.local", "U1Bayi!2026");
+            var before = await api.Client.GetFromJsonAsync<JsonElement>(
+                "/api/auth/me", TestContext.Current.CancellationToken);
+            using (var remoteUpdate = await SendJsonAsync(api, HttpMethod.Put, "/api/auth/profile", new
+            {
+                firstName = remoteName,
+                lastName = originalLastName,
+                phone = originalPhone,
+                company = originalCompany,
+                rowVersion = before.GetProperty("rowVersion").GetString()
+            }))
+            {
+                remoteUpdate.EnsureSuccessStatusCode();
+            }
+
+            await firstName.FillAsync(draftName);
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Bilgileri kaydet" }).ClickAsync();
+            await Expect(Page.Locator(".toast.error"))
+                .ToContainTextAsync("Profil bilgileriniz başka bir işlemde değişti");
+            await Expect(firstName).ToHaveValueAsync(draftName);
+
+            await Page.ReloadAsync();
+            await Expect(Page.GetByLabel("Ad", new() { Exact = true })).ToHaveValueAsync(remoteName);
+
+            var latest = await api.Client.GetFromJsonAsync<JsonElement>(
+                "/api/auth/me", TestContext.Current.CancellationToken);
+            using var restore = await SendJsonAsync(api, HttpMethod.Put, "/api/auth/profile", new
+            {
+                firstName = originalName,
+                lastName = originalLastName,
+                phone = originalPhone,
+                company = originalCompany,
+                rowVersion = latest.GetProperty("rowVersion").GetString()
+            });
+            restore.EnsureSuccessStatusCode();
+        });
+    }
+
+    [Fact]
     public async Task Catalog_network_failure_shows_a_recoverable_error()
     {
         await using var application =

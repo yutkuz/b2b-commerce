@@ -6,7 +6,7 @@ import {
     portalFooter,
     publicShell,
     renderPortalPage,
-} from './portal.js?v=20260929b';
+} from './portal.js?v=20260930a';
 import {
     api,
     brand,
@@ -24,7 +24,7 @@ import {
     clearCheckoutSession,
     renderCartPage,
 } from './checkout.js?v=20260929b';
-import { bindAppEvents } from './app-events.js?v=20260930c';
+import { bindAppEvents } from './app-events.js?v=20260930d';
 import { renderOrdersPage } from './orders.js?v=20260930a';
 
 const ROUTES = {

@@ -53,17 +53,17 @@ public sealed class SchemaUpgradeTests
 
             await database.Initialize(development: false);
             await AssertPreservedState(factory, passwordHash, cancellationToken);
-            Assert.Equal(7, await Scalar<int>(connection,
+            Assert.Equal(8, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.SchemaVersions", cancellationToken));
             Assert.Equal(1, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.DemoSetup WHERE Component = 'catalog'", cancellationToken));
 
             await Execute(connection,
-                "INSERT INTO dbo.SchemaVersions(Version) VALUES(8)", cancellationToken);
+                "INSERT INTO dbo.SchemaVersions(Version) VALUES(9)", cancellationToken);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => database.Initialize(development: false));
             Assert.Equal("Veritabanı şeması bu uygulamadan daha yeni.", error.Message);
-            Assert.Equal(8, await Scalar<int>(connection,
+            Assert.Equal(9, await Scalar<int>(connection,
                 "SELECT MAX(Version) FROM dbo.SchemaVersions", cancellationToken));
             await AssertPreservedState(factory, passwordHash, cancellationToken);
         }
@@ -84,6 +84,7 @@ public sealed class SchemaUpgradeTests
         Assert.Equal(passwordHash, user.PasswordHash);
         Assert.Equal(PasswordVerificationResult.Success,
             new PasswordHasher<User>().VerifyHashedPassword(user, user.PasswordHash, "LegacyPassword!2026"));
+        Assert.Equal(8, user.RowVersion.Length);
 
         var product = await db.Products.SingleAsync(x => x.Code == "LEGACY-001", cancellationToken);
         Assert.Equal(7, product.Stock);
@@ -156,6 +157,8 @@ public sealed class SchemaUpgradeTests
             adminEvent.FindProperty(nameof(AdminEvent.Summary))!, 500, cancellationToken);
         await AssertColumn(connection, "StockMovements", "Reason", "nvarchar", 600, 0, 0,
             stockMovement.FindProperty(nameof(StockMovement.Reason))!, 300, cancellationToken);
+
+        await AssertRowVersion(connection, user, "Users", nameof(User.RowVersion), cancellationToken);
 
         var rowVersion = product.FindProperty(nameof(Product.RowVersion))!;
         var rowVersionColumn = await ReadColumn(connection, "Products", "RowVersion", cancellationToken);

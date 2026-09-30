@@ -45,4 +45,21 @@ public sealed class UserInput
     public int Version { get; set; }
 }
 
+public sealed class ProfileUpdateInput
+{
+    [Required, StringLength(80)]
+    public string FirstName { get; set; } = "";
+
+    [Required, StringLength(80)]
+    public string LastName { get; set; } = "";
+
+    [Required, RegularExpression(@"^[+\d\s()\-]{10,25}$")]
+    public string Phone { get; set; } = "";
+
+    [StringLength(180)]
+    public string Company { get; set; } = "";
+
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public record LoginInput(string Email, string Password);

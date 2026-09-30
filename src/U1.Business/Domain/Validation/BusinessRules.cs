@@ -27,6 +27,7 @@ public static class Rules
         {
             RegisterInput register => register.Phone,
             UserInput user => user.Phone,
+            ProfileUpdateInput profile => profile.Phone,
             _ => null
         };
 

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
+using U1.Business.Services;
 
 namespace U1.Business.Endpoints;
 
@@ -24,6 +25,7 @@ public static class AuthEndpoints
             u.Company,
             u.Role,
             u.IsActive,
+            u.RowVersion,
         };
 
     private static Task SignIn(HttpContext c, User u) =>
@@ -136,6 +138,56 @@ public static class AuthEndpoints
                     var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == c.UserId())
                         ?? throw new BusinessException("Kullanıcı bulunamadı.", 404);
                     return PublicUser(user);
+                }
+            )
+            .RequireAuthorization();
+
+        app.MapPut(
+                "/api/auth/profile",
+                async (ProfileUpdateInput input, BusinessDbContext db, HttpContext c) =>
+                {
+                    if (input is null)
+                        throw new BusinessException("Profil bilgileri gerekli.");
+                    input.Company ??= "";
+                    Rules.Validate(input);
+                    if (input.RowVersion is not { Length: 8 })
+                        throw new BusinessException("Profil sürümü gerekli.");
+
+                    await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+                    var user = await db.Users
+                        .FromSqlInterpolated($"SELECT * FROM Users WITH(UPDLOCK,HOLDLOCK) WHERE Id={c.UserId()}")
+                        .SingleOrDefaultAsync()
+                        ?? throw new BusinessException("Kullanıcı bulunamadı.", 404);
+
+                    if (!user.RowVersion.AsSpan().SequenceEqual(input.RowVersion))
+                        throw new BusinessException(
+                            "Profil bilgileriniz başka bir işlemde değişti. Güncel bilgileri yeniden yükleyin.",
+                            409,
+                            "PROFILE_CHANGED");
+
+                    db.Entry(user).Property(x => x.RowVersion).OriginalValue = input.RowVersion;
+                    user.FirstName = input.FirstName.Trim();
+                    user.LastName = input.LastName.Trim();
+                    user.Phone = input.Phone.Trim();
+                    user.Company = input.Company.Trim();
+                    db.AdminEvents.Add(AuditTrail.Event(
+                        c.UserId(), "DealerProfileUpdated", "User", user.Id,
+                        "Kullanıcı kendi profil bilgilerini güncelledi."));
+
+                    try
+                    {
+                        await db.SaveChangesAsync();
+                    }
+                    catch (DbUpdateConcurrencyException)
+                    {
+                        throw new BusinessException(
+                            "Profil bilgileriniz başka bir işlemde değişti. Güncel bilgileri yeniden yükleyin.",
+                            409,
+                            "PROFILE_CHANGED");
+                    }
+
+                    await tx.CommitAsync();
+                    return Results.Ok(PublicUser(user));
                 }
             )
             .RequireAuthorization();
