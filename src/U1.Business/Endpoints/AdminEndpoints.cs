@@ -7,6 +7,7 @@ public static partial class AdminEndpoints
         var api = app.MapGroup("/api/admin").RequireAuthorization("Admin");
         MapDashboard(api);
         MapProducts(api);
+        MapProductCsv(api);
         MapCategories(api);
         MapUsers(api);
         MapPricing(api);
