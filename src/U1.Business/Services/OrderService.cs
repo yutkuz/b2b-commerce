@@ -90,6 +90,7 @@ public sealed class OrderService(
         }
 
         await EnsureRequestIdIsAvailable(db, input.RequestId);
+        var discountPercent = await Pricing.LockDiscountFor(db, userId);
 
         var cartLines = await db.CartItems
             .AsNoTracking()
@@ -106,6 +107,11 @@ public sealed class OrderService(
             throw CartChanged();
 
         await LoadProductSnapshots(db, cartLines);
+        foreach (var line in cartLines)
+        {
+            line.DiscountPercent = discountPercent;
+            line.AppliedPrice = Pricing.Apply(line.Product.Price, discountPercent);
+        }
         EnsureProductsAreSellable(cartLines);
 
         if (!MatchesApprovedCart(cartLines, approvedLines))
@@ -113,7 +119,7 @@ public sealed class OrderService(
 
         EnsureStockIsAvailable(cartLines);
 
-        var total = cartLines.Sum(line => line.Quantity * line.Product.Price);
+        var total = cartLines.Sum(line => line.Quantity * line.AppliedPrice);
         var order = new Order
         {
             Number = CreateOrderNumber(),
@@ -142,8 +148,10 @@ public sealed class OrderService(
                 ProductCode = line.Product.Code,
                 ProductName = line.Product.Name,
                 Quantity = line.Quantity,
-                UnitPrice = line.Product.Price,
-                Total = line.Quantity * line.Product.Price
+                ListUnitPrice = line.Product.Price,
+                UnitPrice = line.AppliedPrice,
+                DiscountPercent = line.DiscountPercent,
+                Total = line.Quantity * line.AppliedPrice
             });
             var previousStock = line.Product.Stock;
             line.Product.Stock -= line.Quantity;
@@ -257,7 +265,7 @@ public sealed class OrderService(
         return cartLines.All(line =>
             approvedByProduct.TryGetValue(line.ProductId, out var approved) &&
             approved.Quantity == line.Quantity &&
-            approved.UnitPrice == line.Product.Price);
+            approved.UnitPrice == line.AppliedPrice);
     }
 
     private static void EnsureProductsAreSellable(IEnumerable<CartLine> lines)
@@ -426,6 +434,7 @@ public sealed class OrderService(
         await using var db = await dbFactory.CreateDbContextAsync();
         if (!await db.Orders.AsNoTracking().AnyAsync(x => x.Id == orderId && x.UserId == userId))
             throw new BusinessException("Sipariş bulunamadı.", 404);
+        var discountPercent = await Pricing.DiscountFor(db, userId);
 
         var items = await (
             from line in db.OrderItems.AsNoTracking()
@@ -439,7 +448,7 @@ public sealed class OrderService(
                 line.ProductName,
                 line.Quantity,
                 PreviousUnitPrice = line.UnitPrice,
-                CurrentUnitPrice = product.Price,
+                CurrentListPrice = product.Price,
                 product.Stock,
                 product.IsArchived
             }).ToListAsync();
@@ -458,7 +467,9 @@ public sealed class OrderService(
                 item.ProductName,
                 item.Quantity,
                 item.PreviousUnitPrice,
-                item.CurrentUnitPrice,
+                item.CurrentListPrice,
+                CurrentUnitPrice = Pricing.Apply(item.CurrentListPrice, discountPercent),
+                DiscountPercent = discountPercent,
                 item.Stock,
                 item.IsArchived,
                 ExistingCartQuantity = cartQuantities.GetValueOrDefault(item.ProductId),
@@ -485,6 +496,7 @@ public sealed class OrderService(
             ?? throw new BusinessException("Sepet bulunamadı.", 404);
         if (!await db.Orders.AsNoTracking().AnyAsync(x => x.Id == orderId && x.UserId == userId))
             throw new BusinessException("Sipariş bulunamadı.", 404);
+        var discountPercent = await Pricing.LockDiscountFor(db, userId);
 
         var originals = await db.OrderItems.AsNoTracking()
             .Where(x => x.OrderId == orderId)
@@ -502,8 +514,8 @@ public sealed class OrderService(
                 ?? throw new BusinessException("Ürün artık bulunamıyor.", 409, "PRODUCT_UNAVAILABLE");
             if (product.IsArchived)
                 throw new BusinessException("Ürün artık satışta değil.", 409, "PRODUCT_ARCHIVED");
-            if (product.Price != line.UnitPrice)
-                throw new BusinessException("Ürün fiyatı değişti. Güncel tutarı yeniden onaylayın.", 409, "PRICE_CHANGED");
+            if (Pricing.Apply(product.Price, discountPercent) != line.UnitPrice)
+                throw new BusinessException("Ürün fiyatı veya bayi indirimi değişti. Güncel tutarı yeniden onaylayın.", 409, "PRICE_CHANGED");
 
             var cartItem = await db.CartItems.SingleOrDefaultAsync(x =>
                 x.CartId == cart.Id && x.ProductId == line.ProductId);
@@ -579,6 +591,8 @@ public sealed class OrderService(
     {
         public int ProductId { get; set; }
         public int Quantity { get; set; }
+        public decimal AppliedPrice { get; set; }
+        public decimal DiscountPercent { get; set; }
         public Product Product { get; set; } = null!;
     }
 }

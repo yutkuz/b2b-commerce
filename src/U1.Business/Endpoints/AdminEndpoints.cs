@@ -9,6 +9,7 @@ public static partial class AdminEndpoints
         MapProducts(api);
         MapCategories(api);
         MapUsers(api);
+        MapPricing(api);
         MapOrders(api);
         MapGrid(api);
         MapBanners(api);

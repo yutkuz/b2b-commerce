@@ -25,6 +25,7 @@ public static class AuthEndpoints
             u.Company,
             u.Role,
             u.IsActive,
+            u.DealerGroupId,
             u.RowVersion,
         };
 
@@ -62,6 +63,11 @@ public static class AuthEndpoints
                     Rules.Validate(input);
 
                     await using var tx = await db.Database.BeginTransactionAsync();
+                    var defaultGroupId = await db.DealerGroups
+                        .AsNoTracking()
+                        .OrderBy(x => x.Id)
+                        .Select(x => x.Id)
+                        .FirstAsync();
                     var user = new User
                     {
                         FirstName = input.FirstName.Trim(),
@@ -70,6 +76,7 @@ public static class AuthEndpoints
                         Phone = input.Phone,
                         Company = input.Company.Trim(),
                         Role = "Dealer",
+                        DealerGroupId = defaultGroupId,
                         IsActive = true,
                         AuthVersion = 1,
                     };

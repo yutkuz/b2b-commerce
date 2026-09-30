@@ -42,6 +42,11 @@ public static partial class AdminEndpoints
                             x.Company,
                             x.Role,
                             x.IsActive,
+                            x.DealerGroupId,
+                            DealerGroupName = db.DealerGroups
+                                .Where(g => g.Id == x.DealerGroupId)
+                                .Select(g => g.Name)
+                                .FirstOrDefault(),
                             Version = x.AuthVersion
                         })
                         .ToListAsync(),
@@ -91,6 +96,14 @@ public static partial class AdminEndpoints
                 var phone = input.Phone;
                 var company = input.Company;
                 var isActive = input.IsActive;
+                var dealerGroupId = u.Role == "Dealer"
+                    ? input.DealerGroupId ?? u.DealerGroupId
+                    : null;
+                if (u.Role == "Dealer" && dealerGroupId is null)
+                    throw new BusinessException("Bayi grubu gerekli.");
+                if (dealerGroupId is not null
+                    && !await db.DealerGroups.AsNoTracking().AnyAsync(x => x.Id == dealerGroupId))
+                    throw new BusinessException("Geçerli bir bayi grubu seçin.");
                 var version = input.Version;
                 var target = db.Users.Where(x => x.Id == id && x.AuthVersion == version);
                 await using var tx = await db.Database.BeginTransactionAsync();
@@ -131,6 +144,7 @@ public static partial class AdminEndpoints
                         .SetProperty(x => x.Phone, phone)
                         .SetProperty(x => x.Company, company)
                         .SetProperty(x => x.IsActive, isActive)
+                        .SetProperty(x => x.DealerGroupId, dealerGroupId)
                         .SetProperty(x => x.AuthVersion, x => x.AuthVersion + 1));
                 }
                 else
@@ -142,6 +156,7 @@ public static partial class AdminEndpoints
                         .SetProperty(x => x.Phone, phone)
                         .SetProperty(x => x.Company, company)
                         .SetProperty(x => x.IsActive, isActive)
+                        .SetProperty(x => x.DealerGroupId, dealerGroupId)
                         .SetProperty(x => x.PasswordHash, passwordHash)
                         .SetProperty(x => x.AuthVersion, x => x.AuthVersion + 1));
                 }
@@ -191,6 +206,15 @@ public static partial class AdminEndpoints
                         "User",
                         id,
                         "Kullanıcı profil bilgileri güncellendi."));
+                }
+                if (u.DealerGroupId != dealerGroupId)
+                {
+                    events.Add(AuditTrail.Event(
+                        c.UserId(),
+                        "DealerGroupAssigned",
+                        "User",
+                        id,
+                        $"Kullanıcının bayi grubu {dealerGroupId} olarak güncellendi."));
                 }
                 if (events.Count == 0)
                 {

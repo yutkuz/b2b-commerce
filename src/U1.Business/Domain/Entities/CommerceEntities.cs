@@ -47,6 +47,8 @@ public sealed class OrderItem
     public string ProductCode { get; set; } = "";
     public string ProductName { get; set; } = "";
     public int Quantity { get; set; }
+    public decimal ListUnitPrice { get; set; }
     public decimal UnitPrice { get; set; }
+    public decimal DiscountPercent { get; set; }
     public decimal Total { get; set; }
 }

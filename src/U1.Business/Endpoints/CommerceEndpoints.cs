@@ -17,7 +17,8 @@ public static class CommerceEndpoints
             async (BusinessDbContext db, HttpContext c) =>
             {
                 var id = c.UserId();
-                var items = await (
+                var discountPercent = await Pricing.DiscountFor(db, id);
+                var rows = await (
                     from ca in db.Carts.AsNoTracking()
                     join ci in db.CartItems.AsNoTracking() on ca.Id equals ci.CartId
                     join p in db.Products.AsNoTracking() on ci.ProductId equals p.Id
@@ -29,15 +30,33 @@ public static class CommerceEndpoints
                         p.Code,
                         p.Name,
                         p.ImageUrl,
-                        p.Price,
+                        ListPrice = p.Price,
                         p.Stock,
                         p.IsArchived,
                         ci.Quantity,
                         UnavailableMessage = p.IsArchived
                             ? "Bu ürün artık satışta değil. Sepetten çıkarın."
                             : null,
-                        Total = p.IsArchived ? 0m : p.Price * ci.Quantity
                     }).ToListAsync();
+                var items = rows.Select(x =>
+                {
+                    var price = Pricing.Apply(x.ListPrice, discountPercent);
+                    return new
+                    {
+                        x.Id,
+                        x.Code,
+                        x.Name,
+                        x.ImageUrl,
+                        x.ListPrice,
+                        Price = price,
+                        DiscountPercent = discountPercent,
+                        x.Stock,
+                        x.IsArchived,
+                        x.Quantity,
+                        x.UnavailableMessage,
+                        Total = x.IsArchived ? 0m : price * x.Quantity
+                    };
+                }).ToList();
 
                 return new
                 {
@@ -149,7 +168,9 @@ public static class CommerceEndpoints
                         x.ProductCode,
                         x.ProductName,
                         x.Quantity,
+                        x.ListUnitPrice,
                         x.UnitPrice,
+                        x.DiscountPercent,
                         x.Total
                     })
                     .ToListAsync();

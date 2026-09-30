@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using U1.Business.Data;
 using U1.Business.Domain;
+using U1.Business.Services;
 
 namespace U1.Business.Endpoints;
 
@@ -59,9 +60,11 @@ public static class CatalogEndpoints
                 string? stock,
                 string? sort,
                 int? page,
-                BusinessDbContext db
+                BusinessDbContext db,
+                HttpContext c
             ) =>
             {
+                var discountPercent = await Pricing.DiscountFor(db, c.UserId());
                 var pageNumber = Math.Clamp(page ?? 1, 1, 100000);
                 q = (q ?? "").Trim();
                 if (q.Length > 200)
@@ -117,7 +120,7 @@ public static class CatalogEndpoints
                     _ => query.OrderBy(x => x.Product.Id)
                 };
 
-                var items = await ordered
+                var rows = await ordered
                     .Skip((pageNumber - 1) * 20)
                     .Take(20)
                     .Select(x => new
@@ -133,13 +136,34 @@ public static class CatalogEndpoints
                         x.Product.ImageUrl,
                         x.Product.Stock,
                         x.Product.CriticalStock,
-                        x.Product.Price,
+                        ListPrice = x.Product.Price,
                         x.Product.CategoryId,
                         x.Product.CreatedAt,
                         x.Product.RowVersion,
                         x.Category
                     })
                     .ToListAsync();
+                var items = rows.Select(x => new
+                {
+                    x.Id,
+                    x.Code,
+                    x.Name,
+                    x.Description,
+                    x.Brand,
+                    x.ManufacturerCode,
+                    x.SpecialCode1,
+                    x.SpecialCode2,
+                    x.ImageUrl,
+                    x.Stock,
+                    x.CriticalStock,
+                    x.ListPrice,
+                    Price = Pricing.Apply(x.ListPrice, discountPercent),
+                    DiscountPercent = discountPercent,
+                    x.CategoryId,
+                    x.CreatedAt,
+                    x.RowVersion,
+                    x.Category
+                }).ToList();
 
                 return new
                 {
@@ -153,8 +177,9 @@ public static class CatalogEndpoints
 
         api.MapGet(
             "/products/{id:int}",
-            async (int id, BusinessDbContext db) =>
+            async (int id, BusinessDbContext db, HttpContext c) =>
             {
+                var discountPercent = await Pricing.DiscountFor(db, c.UserId());
                 var product = await (
                     from p in db.Products.AsNoTracking()
                     join c in db.Categories.AsNoTracking() on p.CategoryId equals c.Id
@@ -172,14 +197,36 @@ public static class CatalogEndpoints
                         p.ImageUrl,
                         p.Stock,
                         p.CriticalStock,
-                        p.Price,
+                        ListPrice = p.Price,
                         p.CategoryId,
                         p.CreatedAt,
                         p.RowVersion,
                         Category = c.Name
                     }).SingleOrDefaultAsync();
 
-                return product ?? throw new BusinessException("Ürün bulunamadı.", 404);
+                if (product is null)
+                    throw new BusinessException("Ürün bulunamadı.", 404);
+                return Results.Ok(new
+                {
+                    product.Id,
+                    product.Code,
+                    product.Name,
+                    product.Description,
+                    product.Brand,
+                    product.ManufacturerCode,
+                    product.SpecialCode1,
+                    product.SpecialCode2,
+                    product.ImageUrl,
+                    product.Stock,
+                    product.CriticalStock,
+                    product.ListPrice,
+                    Price = Pricing.Apply(product.ListPrice, discountPercent),
+                    DiscountPercent = discountPercent,
+                    product.CategoryId,
+                    product.CreatedAt,
+                    product.RowVersion,
+                    product.Category
+                });
             }
         );
     }

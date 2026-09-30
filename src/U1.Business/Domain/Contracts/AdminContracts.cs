@@ -88,3 +88,18 @@ public sealed class ImageCleanupInput
 {
     public string[] Urls { get; set; } = [];
 }
+
+
+public class DealerGroupInput
+{
+    [Required, StringLength(80)]
+    public string Name { get; set; } = "";
+
+    [Range(0, 100)]
+    public decimal DiscountPercent { get; set; }
+}
+
+public sealed class DealerGroupUpdateInput : DealerGroupInput
+{
+    public byte[] RowVersion { get; set; } = [];
+}

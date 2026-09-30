@@ -12,5 +12,14 @@ public sealed class User
     public string Role { get; set; } = "Dealer";
     public bool IsActive { get; set; }
     public int AuthVersion { get; set; }
+    public int? DealerGroupId { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class DealerGroup
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public decimal DiscountPercent { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }

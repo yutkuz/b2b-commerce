@@ -6,6 +6,7 @@ namespace U1.Business.Data;
 public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
+    public DbSet<DealerGroup> DealerGroups => Set<DealerGroup>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Cart> Carts => Set<Cart>();
@@ -37,6 +38,17 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Role).HasMaxLength(12).IsUnicode(false);
             entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => x.Email).IsUnique();
+            entity.HasOne<DealerGroup>().WithMany().HasForeignKey(x => x.DealerGroupId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DealerGroup>(entity =>
+        {
+            entity.ToTable("DealerGroups");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(80);
+            entity.Property(x => x.DiscountPercent).HasPrecision(5, 2);
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.HasIndex(x => x.Name).IsUnique();
         });
 
         modelBuilder.Entity<Category>(entity =>
@@ -112,7 +124,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasKey(x => x.Id);
             entity.Property(x => x.ProductCode).HasMaxLength(60);
             entity.Property(x => x.ProductName).HasMaxLength(180);
+            entity.Property(x => x.ListUnitPrice).HasPrecision(18, 2);
             entity.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            entity.Property(x => x.DiscountPercent).HasPrecision(5, 2);
             entity.Property(x => x.Total).HasPrecision(18, 2);
             entity.HasIndex(x => x.OrderId);
             entity.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.NoAction);

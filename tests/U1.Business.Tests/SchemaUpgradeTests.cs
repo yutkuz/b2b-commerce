@@ -53,17 +53,17 @@ public sealed class SchemaUpgradeTests
 
             await database.Initialize(development: false);
             await AssertPreservedState(factory, passwordHash, cancellationToken);
-            Assert.Equal(8, await Scalar<int>(connection,
+            Assert.Equal(9, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.SchemaVersions", cancellationToken));
             Assert.Equal(1, await Scalar<int>(connection,
                 "SELECT COUNT(*) FROM dbo.DemoSetup WHERE Component = 'catalog'", cancellationToken));
 
             await Execute(connection,
-                "INSERT INTO dbo.SchemaVersions(Version) VALUES(9)", cancellationToken);
+                "INSERT INTO dbo.SchemaVersions(Version) VALUES(10)", cancellationToken);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => database.Initialize(development: false));
             Assert.Equal("Veritabanı şeması bu uygulamadan daha yeni.", error.Message);
-            Assert.Equal(9, await Scalar<int>(connection,
+            Assert.Equal(10, await Scalar<int>(connection,
                 "SELECT MAX(Version) FROM dbo.SchemaVersions", cancellationToken));
             await AssertPreservedState(factory, passwordHash, cancellationToken);
         }
@@ -85,6 +85,11 @@ public sealed class SchemaUpgradeTests
         Assert.Equal(PasswordVerificationResult.Success,
             new PasswordHasher<User>().VerifyHashedPassword(user, user.PasswordHash, "LegacyPassword!2026"));
         Assert.Equal(8, user.RowVersion.Length);
+        Assert.NotNull(user.DealerGroupId);
+        Assert.Equal(0m, await db.DealerGroups
+            .Where(x => x.Id == user.DealerGroupId)
+            .Select(x => x.DiscountPercent)
+            .SingleAsync(cancellationToken));
 
         var product = await db.Products.SingleAsync(x => x.Code == "LEGACY-001", cancellationToken);
         Assert.Equal(7, product.Stock);
@@ -110,7 +115,9 @@ public sealed class SchemaUpgradeTests
         Assert.Equal(product.Id, line.ProductId);
         Assert.Equal("Legacy product snapshot", line.ProductName);
         Assert.Equal(2, line.Quantity);
+        Assert.Equal(12.50m, line.ListUnitPrice);
         Assert.Equal(12.50m, line.UnitPrice);
+        Assert.Equal(0m, line.DiscountPercent);
         Assert.Equal(25m, line.Total);
         Assert.Equal(1, await db.Carts.CountAsync(x => x.UserId == user.Id, cancellationToken));
         var opening = await db.StockMovements.SingleAsync(
@@ -126,6 +133,7 @@ public sealed class SchemaUpgradeTests
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var user = db.Model.FindEntityType(typeof(User))!;
+        var dealerGroup = db.Model.FindEntityType(typeof(DealerGroup))!;
         var category = db.Model.FindEntityType(typeof(Category))!;
         var product = db.Model.FindEntityType(typeof(Product))!;
         var order = db.Model.FindEntityType(typeof(Order))!;
@@ -139,6 +147,8 @@ public sealed class SchemaUpgradeTests
             user.FindProperty(nameof(User.Email))!, 200, cancellationToken);
         await AssertColumn(connection, "Users", "Role", "varchar", 12, 0, 0,
             user.FindProperty(nameof(User.Role))!, 12, cancellationToken);
+        await AssertColumn(connection, "DealerGroups", "DiscountPercent", "decimal", 5, 5, 2,
+            dealerGroup.FindProperty(nameof(DealerGroup.DiscountPercent))!, null, cancellationToken);
         await AssertColumn(connection, "Products", "Name", "nvarchar", 360, 0, 0,
             product.FindProperty(nameof(Product.Name))!, 180, cancellationToken);
         await AssertColumn(connection, "Products", "Price", "decimal", 9, 18, 2,
@@ -151,14 +161,19 @@ public sealed class SchemaUpgradeTests
             order.FindProperty(nameof(Order.AdminNote))!, 1000, cancellationToken);
         await AssertColumn(connection, "Orders", "RejectionReason", "nvarchar", 600, 0, 0,
             order.FindProperty(nameof(Order.RejectionReason))!, 300, cancellationToken);
+        await AssertColumn(connection, "OrderItems", "ListUnitPrice", "decimal", 9, 18, 2,
+            orderItem.FindProperty(nameof(OrderItem.ListUnitPrice))!, null, cancellationToken);
         await AssertColumn(connection, "OrderItems", "UnitPrice", "decimal", 9, 18, 2,
             orderItem.FindProperty(nameof(OrderItem.UnitPrice))!, null, cancellationToken);
+        await AssertColumn(connection, "OrderItems", "DiscountPercent", "decimal", 5, 5, 2,
+            orderItem.FindProperty(nameof(OrderItem.DiscountPercent))!, null, cancellationToken);
         await AssertColumn(connection, "AdminEvents", "Summary", "nvarchar", 1000, 0, 0,
             adminEvent.FindProperty(nameof(AdminEvent.Summary))!, 500, cancellationToken);
         await AssertColumn(connection, "StockMovements", "Reason", "nvarchar", 600, 0, 0,
             stockMovement.FindProperty(nameof(StockMovement.Reason))!, 300, cancellationToken);
 
         await AssertRowVersion(connection, user, "Users", nameof(User.RowVersion), cancellationToken);
+        await AssertRowVersion(connection, dealerGroup, "DealerGroups", nameof(DealerGroup.RowVersion), cancellationToken);
 
         var rowVersion = product.FindProperty(nameof(Product.RowVersion))!;
         var rowVersionColumn = await ReadColumn(connection, "Products", "RowVersion", cancellationToken);
@@ -200,6 +215,7 @@ public sealed class SchemaUpgradeTests
         Assert.Contains("Bekliyor", status.Default!);
         Assert.Equal("Bekliyor", order.FindProperty(nameof(Order.Status))!.GetDefaultValue());
 
+        await AssertForeignKey(connection, db, "Users", nameof(User.DealerGroupId), "DealerGroups", cancellationToken);
         await AssertForeignKey(connection, db, "Products", nameof(Product.CategoryId), "Categories", cancellationToken);
         await AssertForeignKey(connection, db, "Products", nameof(Product.ArchivedByUserId), "Users", cancellationToken);
         await AssertForeignKey(connection, db, "Carts", nameof(Cart.UserId), "Users", cancellationToken);

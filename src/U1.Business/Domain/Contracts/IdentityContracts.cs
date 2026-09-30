@@ -41,6 +41,7 @@ public sealed class UserInput
     public string Company { get; set; } = "";
 
     public bool IsActive { get; set; } = true;
+    public int? DealerGroupId { get; set; }
     public string? NewPassword { get; set; }
     public int Version { get; set; }
 }
