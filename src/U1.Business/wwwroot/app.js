@@ -24,7 +24,7 @@ import {
     clearCheckoutSession,
     renderCartPage,
 } from './checkout.js?v=20260929b';
-import { bindAppEvents } from './app-events.js?v=20260930b';
+import { bindAppEvents } from './app-events.js?v=20260930c';
 import { renderOrdersPage } from './orders.js?v=20260930a';
 
 const ROUTES = {
