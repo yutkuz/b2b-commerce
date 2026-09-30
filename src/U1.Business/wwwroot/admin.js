@@ -6,7 +6,9 @@ import {
   submitProduct,
   archiveProduct,
   restoreProduct,
-} from "./admin/products.js?v=20260929b";
+  previewImageCleanup,
+  cleanupImages,
+} from "./admin/products.js?v=20260930c";
 import {
   categoryList,
   submitCategoryCreate,
@@ -55,6 +57,8 @@ export async function adminAction(action, element, { render }) {
   if (action === "reload-product") return render();
   if (action === "archive-product") return archiveProduct(element, render);
   if (action === "restore-product") return restoreProduct(element, render);
+  if (action === "preview-image-cleanup") return previewImageCleanup();
+  if (action === "cleanup-images") return cleanupImages(element, render);
   if (action === "reload-grid") return render();
   if (action === "reload-banner") return reloadBannerEditor(element, render);
   if (action === "user-edit") return showUserEditor(element);
