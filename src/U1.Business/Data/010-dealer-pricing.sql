@@ -18,9 +18,9 @@ ALTER TABLE dbo.Users
 ADD CONSTRAINT FK_Users_DealerGroups
 FOREIGN KEY(DealerGroupId) REFERENCES dbo.DealerGroups(Id);
 
-UPDATE dbo.Users
+EXEC(N'UPDATE dbo.Users
 SET DealerGroupId = 1
-WHERE Role = 'Dealer' AND DealerGroupId IS NULL;
+WHERE Role = ''Dealer'' AND DealerGroupId IS NULL;');
 
 ALTER TABLE dbo.OrderItems
 ADD ListUnitPrice decimal(18,2) NOT NULL
@@ -28,5 +28,5 @@ ADD ListUnitPrice decimal(18,2) NOT NULL
     DiscountPercent decimal(5,2) NOT NULL
         CONSTRAINT DF_OrderItems_DiscountPercent DEFAULT 0;
 
-UPDATE dbo.OrderItems
-SET ListUnitPrice = UnitPrice;
+EXEC(N'UPDATE dbo.OrderItems
+SET ListUnitPrice = UnitPrice;');
