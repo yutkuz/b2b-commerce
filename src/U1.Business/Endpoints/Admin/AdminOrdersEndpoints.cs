@@ -59,7 +59,7 @@ public static partial class AdminEndpoints
                 await orders.ChangeStatus(id, input, c.UserId());
                 return Results.Ok();
             }
-        );
+        ).RequireRateLimiting("commerce-write");
 
         api.MapGet(
             "/orders/{id:int}/internal",
@@ -83,6 +83,6 @@ public static partial class AdminEndpoints
                 await orders.UpdateAdminNote(id, input, c.UserId());
                 return Results.Ok();
             }
-        );
+        ).RequireRateLimiting("commerce-write");
     }
 }

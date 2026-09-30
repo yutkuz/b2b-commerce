@@ -78,16 +78,48 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("Admin", policy => policy.RequireRole("Admin")));
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode = 429;
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        var retryAfter = TimeSpan.FromSeconds(1);
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var metadataRetryAfter))
+            retryAfter = metadataRetryAfter;
+
+        var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+        context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new
+            {
+                message = "Çok fazla istek gönderildi. Belirtilen süre sonra tekrar deneyin.",
+                code = "RATE_LIMITED",
+                retryAfterSeconds
+            },
+            cancellationToken: cancellationToken);
+    };
+
     options.AddPolicy(
         "auth",
         context => RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "local",
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 15,
-                Window = TimeSpan.FromMinutes(1)
-            }));
+            _ => RateWindow(builder.Configuration, "Auth", 15, 60)));
+
+    options.AddPolicy(
+        "catalog-search",
+        context => RateLimitPartition.GetFixedWindowLimiter(
+            UserPartition(context),
+            _ => RateWindow(builder.Configuration, "CatalogSearch", 120, 60)));
+
+    options.AddPolicy(
+        "commerce-write",
+        context => RateLimitPartition.GetFixedWindowLimiter(
+            UserPartition(context),
+            _ => RateWindow(builder.Configuration, "CommerceWrite", 60, 60)));
+
+    options.AddPolicy(
+        "image-upload",
+        context => RateLimitPartition.GetFixedWindowLimiter(
+            UserPartition(context),
+            _ => RateWindow(builder.Configuration, "ImageUpload", 15, 60)));
 });
 
 var app = builder.Build();
@@ -155,8 +187,8 @@ if (!app.Environment.IsDevelopment())
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.Use(async (context, next) =>
 {
@@ -194,6 +226,37 @@ app.MapAdmin();
 app.MapFallbackToFile("index.html");
 await app.Services.GetRequiredService<Database>().Initialize(app.Environment.IsDevelopment());
 app.Run();
+
+static FixedWindowRateLimiterOptions RateWindow(
+    IConfiguration configuration,
+    string name,
+    int defaultPermitLimit,
+    int defaultWindowSeconds)
+{
+    var permitLimit = Math.Max(
+        1,
+        configuration.GetValue<int?>($"RateLimits:{name}:PermitLimit") ?? defaultPermitLimit);
+    var windowSeconds = Math.Max(
+        1,
+        configuration.GetValue<int?>($"RateLimits:{name}:WindowSeconds") ?? defaultWindowSeconds);
+
+    return new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = permitLimit,
+        Window = TimeSpan.FromSeconds(windowSeconds),
+        QueueLimit = 0,
+        AutoReplenishment = true
+    };
+}
+
+static string UserPartition(HttpContext context)
+{
+    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!string.IsNullOrEmpty(userId))
+        return "user:" + userId;
+
+    return "anonymous:" + (context.Connection.RemoteIpAddress?.ToString() ?? "local");
+}
 
 public partial class Program
 {

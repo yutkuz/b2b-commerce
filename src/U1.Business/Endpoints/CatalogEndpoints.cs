@@ -149,7 +149,7 @@ public static class CatalogEndpoints
                     pageSize = 20,
                 };
             }
-        );
+        ).RequireRateLimiting("catalog-search");
 
         api.MapGet(
             "/products/{id:int}",

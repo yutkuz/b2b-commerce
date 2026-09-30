@@ -330,7 +330,7 @@ public static partial class AdminEndpoints
                 await File.WriteAllBytesAsync(Path.Combine(folder, name), bytes);
                 return Results.Ok(new { url = "/uploads/" + name });
             }
-        );
+        ).RequireRateLimiting("image-upload");
     }
 
     private static Task<Product?> LockProductForWrite(BusinessDbContext db, int id) =>

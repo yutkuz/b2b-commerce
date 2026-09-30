@@ -52,25 +52,25 @@ public static class CommerceEndpoints
             "/cart",
             async (CartInput? input, BusinessDbContext db, HttpContext c) =>
                 await SetCart(input, true, db, c)
-        );
+        ).RequireRateLimiting("commerce-write");
 
         api.MapPut(
             "/cart",
             async (CartInput? input, BusinessDbContext db, HttpContext c) =>
                 await SetCart(input, false, db, c)
-        );
+        ).RequireRateLimiting("commerce-write");
 
         api.MapDelete(
             "/cart/{productId:int}",
             async (int productId, BusinessDbContext db, HttpContext c) =>
                 await SetCart(new CartInput(productId, 0), false, db, c)
-        );
+        ).RequireRateLimiting("commerce-write");
 
         api.MapPost(
             "/orders",
             async (CheckoutInput input, OrderService orders, HttpContext c) =>
                 await orders.Checkout(c.UserId(), input)
-        );
+        ).RequireRateLimiting("commerce-write");
 
         api.MapGet(
             "/orders/{id:int}/readd-preview",
@@ -87,7 +87,7 @@ public static class CommerceEndpoints
                 await orders.ReaddToCart(c.UserId(), id, input);
                 return Results.Ok();
             }
-        );
+        ).RequireRateLimiting("commerce-write");
 
         api.MapGet(
             "/orders",
