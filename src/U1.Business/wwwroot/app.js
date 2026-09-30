@@ -142,6 +142,10 @@ export async function render() {
 
     if (!state.user) {
         const isPublicRoute = publicRoutes.includes(route);
+        if (!isPublicRoute && route !== 'login' && route !== 'register') {
+            go('login');
+            return;
+        }
 
         document.querySelector('#app').innerHTML = isPublicRoute
             ? publicShell(brand)
