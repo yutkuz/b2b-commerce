@@ -61,10 +61,10 @@ public static class CatalogEndpoints
                 string? sort,
                 int? page,
                 BusinessDbContext db,
-                HttpContext c
+                HttpContext context
             ) =>
             {
-                var discountPercent = await Pricing.DiscountFor(db, c.UserId());
+                var discountPercent = await Pricing.DiscountFor(db, context.UserId());
                 var pageNumber = Math.Clamp(page ?? 1, 1, 100000);
                 q = (q ?? "").Trim();
                 if (q.Length > 200)
@@ -177,9 +177,9 @@ public static class CatalogEndpoints
 
         api.MapGet(
             "/products/{id:int}",
-            async (int id, BusinessDbContext db, HttpContext c) =>
+            async (int id, BusinessDbContext db, HttpContext context) =>
             {
-                var discountPercent = await Pricing.DiscountFor(db, c.UserId());
+                var discountPercent = await Pricing.DiscountFor(db, context.UserId());
                 var product = await (
                     from p in db.Products.AsNoTracking()
                     join c in db.Categories.AsNoTracking() on p.CategoryId equals c.Id
