@@ -1,4 +1,4 @@
-import { renderAdmin } from './admin.js?v=20260930a';
+import { renderAdmin } from './admin.js?v=20260930b';
 import {
     portalRoutes,
     publicRoutes,
@@ -24,7 +24,7 @@ import {
     clearCheckoutSession,
     renderCartPage,
 } from './checkout.js?v=20260929b';
-import { bindAppEvents } from './app-events.js?v=20260930a';
+import { bindAppEvents } from './app-events.js?v=20260930b';
 import { renderOrdersPage } from './orders.js?v=20260930a';
 
 const ROUTES = {
@@ -36,7 +36,7 @@ const ROUTES = {
     'admin-products': ['Ürün yönetimi', 'grid'],
     'admin-product': ['Ürün bilgileri', 'grid'],
     'admin-categories': ['Kategori yönetimi', 'grid'],
-    'admin-users': ['Bayiler', 'users'],
+    'admin-users': ['Kullanıcılar', 'users'],
     'admin-orders': ['Sipariş yönetimi', 'box'],
     'admin-grid': ['Katalog düzeni', 'sliders'],
     'admin-banners': ['Duyurular', 'banner'],

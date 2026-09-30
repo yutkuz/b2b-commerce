@@ -18,7 +18,7 @@ import {
   userList,
   showUserEditor,
   submitUser,
-} from "./admin/users.js?v=20260928b";
+} from "./admin/users.js?v=20260930a";
 import { orderList } from "./admin/orders.js?v=20260930a";
 import { grid, submitGrid } from "./admin/grid.js?v=20260928b";
 import {
