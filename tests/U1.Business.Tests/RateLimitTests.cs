@@ -33,11 +33,11 @@ public sealed class RateLimitTests(ApiFactory factory) : IClassFixture<ApiFactor
         var firstCsrf = await Register(first, "first");
         var secondCsrf = await Register(second, "second");
 
-        Assert.Equal(HttpStatusCode.OK, (await first.GetAsync("/api/products")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await first.GetAsync("/api/products")).StatusCode);
-        using var catalogLimited = await first.GetAsync("/api/products");
+        Assert.Equal(HttpStatusCode.OK, (await first.GetAsync("/api/products", TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await first.GetAsync("/api/products", TestContext.Current.CancellationToken)).StatusCode);
+        using var catalogLimited = await first.GetAsync("/api/products", TestContext.Current.CancellationToken);
         await AssertRateLimited(catalogLimited);
-        Assert.Equal(HttpStatusCode.OK, (await second.GetAsync("/api/products")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await second.GetAsync("/api/products", TestContext.Current.CancellationToken)).StatusCode);
 
         Assert.Equal(HttpStatusCode.OK, (await DeleteCart(first, firstCsrf)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await DeleteCart(first, firstCsrf)).StatusCode);
