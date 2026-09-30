@@ -32,15 +32,17 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
         var service = CreateService(interceptor);
 
         int? orderId = null;
+        StatusInput? statusInput = null;
         if (operation == "status")
         {
             var created = await CreateService().Checkout(dealer.UserId, input);
             orderId = ApiTest.Property(JsonSerializer.SerializeToElement(created), "id").GetInt32();
+            statusInput = await StatusInputFor(orderId.Value, "Reddedildi");
         }
 
         var error = await Assert.ThrowsAsync<BusinessException>(() => operation == "checkout"
             ? service.Checkout(dealer.UserId, input)
-            : service.ChangeStatus(orderId!.Value, "Reddedildi", 1));
+            : service.ChangeStatus(orderId!.Value, statusInput!, 1));
 
         Assert.Equal(503, error.Status);
         Assert.Equal(expectedCode, error.Code);
@@ -62,6 +64,8 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
                 .Select(x => x.Status).SingleAsync(cancellationToken));
         Assert.Equal(operation == "checkout" ? 0 : 1,
             await db.OrderItems.CountAsync(x => x.ProductId == product.Id, cancellationToken));
+        Assert.Equal(operation == "checkout" ? 0 : 1,
+            await db.OrderStatusHistory.CountAsync(x => x.OrderId == orderId, cancellationToken));
         Assert.Equal(operation == "checkout" ? 0 : 1,
             await db.StockMovements.CountAsync(
                 x => x.ProductId == product.Id && x.MovementType == "OrderPlaced",
@@ -200,7 +204,7 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
         var secondRequest = Guid.NewGuid();
         async Task<bool> Reject()
         {
-            await CreateService().ChangeStatus(firstId, "Reddedildi", 1);
+            await CreateService().ChangeStatus(firstId, await StatusInputFor(firstId, "Reddedildi"), 1);
             return true;
         }
         async Task<bool> TryCheckout()
@@ -227,7 +231,7 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
             await db.Products.Where(x => x.Id == product.Id).Select(x => x.Stock).SingleAsync(TestContext.Current.CancellationToken));
         Assert.Equal(checkoutSucceeded ? 1 : 0,
             await db.Orders.CountAsync(x => x.RequestId == secondRequest, TestContext.Current.CancellationToken));
-        await CreateService().ChangeStatus(firstId, "Reddedildi", 1);
+        await CreateService().ChangeStatus(firstId, await StatusInputFor(firstId, "Reddedildi"), 1);
         Assert.Equal(checkoutSucceeded ? 0 : 1,
             await db.Products.Where(x => x.Id == product.Id).Select(x => x.Stock).SingleAsync(TestContext.Current.CancellationToken));
     }
@@ -251,8 +255,8 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
             [new(first.Id, 2, first.Price), new(second.Id, 3, second.Price)]);
         var result = await CreateService().Checkout(dealer.UserId, input);
         var id = ApiTest.Property(JsonSerializer.SerializeToElement(result), "id").GetInt32();
-        await CreateService().ChangeStatus(id, "Reddedildi", 1);
-        await CreateService().ChangeStatus(id, "Reddedildi", 1);
+        await CreateService().ChangeStatus(id, await StatusInputFor(id, "Reddedildi"), 1);
+        await CreateService().ChangeStatus(id, await StatusInputFor(id, "Reddedildi"), 1);
 
         await using var check = await factory.Services.GetRequiredService<IDbContextFactory<BusinessDbContext>>()
             .CreateDbContextAsync(TestContext.Current.CancellationToken);
@@ -273,6 +277,15 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
             ? factory.Services.GetRequiredService<IDbContextFactory<BusinessDbContext>>()
             : new InterceptedDbFactory(ApiFactory.ConnectionString, interceptor);
         return new OrderService(dbFactory, new ConfigurationBuilder().Build());
+    }
+
+    private async Task<StatusInput> StatusInputFor(int id, string status)
+    {
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<BusinessDbContext>>()
+            .CreateDbContextAsync(TestContext.Current.CancellationToken);
+        var version = await db.Orders.Where(x => x.Id == id).Select(x => x.RowVersion)
+            .SingleAsync(TestContext.Current.CancellationToken);
+        return new StatusInput(status, "CI ret", version);
     }
 
     private static async Task<T[]> RunTogether<T>(Func<Task<T>> first, Func<Task<T>> second)
@@ -323,10 +336,15 @@ public sealed class OrderResilienceTests(ApiFactory factory) : IClassFixture<Api
             .CreateDbContextAsync(TestContext.Current.CancellationToken);
         var user = new User
         {
-            FirstName = "CI", LastName = "Dealer",
+            FirstName = "CI",
+            LastName = "Dealer",
             Email = $"ci-{Guid.NewGuid():N}@example.test",
-            Phone = "05321234567", Company = "CI", PasswordHash = "test-only",
-            Role = "Dealer", IsActive = true, AuthVersion = 1
+            Phone = "05321234567",
+            Company = "CI",
+            PasswordHash = "test-only",
+            Role = "Dealer",
+            IsActive = true,
+            AuthVersion = 1
         };
         db.Users.Add(user);
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);

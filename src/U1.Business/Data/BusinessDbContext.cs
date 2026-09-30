@@ -12,6 +12,7 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
     public DbSet<CartItem> CartItems => Set<CartItem>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<OrderStatusHistory> OrderStatusHistory => Set<OrderStatusHistory>();
     public DbSet<GridColumn> GridColumns => Set<GridColumn>();
     public DbSet<Banner> Banners => Set<Banner>();
     public DbSet<SchemaVersion> SchemaVersions => Set<SchemaVersion>();
@@ -94,6 +95,9 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("Bekliyor");
             entity.Property(x => x.Total).HasPrecision(18, 2);
             entity.Property(x => x.Note).HasMaxLength(1000);
+            entity.Property(x => x.AdminNote).HasMaxLength(1000);
+            entity.Property(x => x.RejectionReason).HasMaxLength(300);
+            entity.Property(x => x.RowVersion).IsRowVersion();
             entity.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
             entity.HasIndex(x => x.Number).IsUnique();
             entity.HasIndex(x => x.RequestId).IsUnique();
@@ -112,6 +116,19 @@ public sealed class BusinessDbContext(DbContextOptions<BusinessDbContext> option
             entity.HasIndex(x => x.OrderId);
             entity.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.NoAction);
             entity.HasOne<Product>().WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<OrderStatusHistory>(entity =>
+        {
+            entity.ToTable("OrderStatusHistory");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FromStatus).HasMaxLength(20);
+            entity.Property(x => x.ToStatus).HasMaxLength(20);
+            entity.Property(x => x.Reason).HasMaxLength(300);
+            entity.Property(x => x.ChangedAt).HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
+            entity.HasIndex(x => new { x.OrderId, x.ChangedAt, x.Id });
+            entity.HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<GridColumn>(entity =>

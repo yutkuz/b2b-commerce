@@ -48,3 +48,24 @@ body{background:#f5f6f7}
  .portal-content .bulletin .banner-controls{grid-column:2;margin:0}
  .legal-document{padding:23px}.legal-document section h2{font-size:16px;gap:11px}.legal-document section p{margin-left:0;font-size:13px}
 }
+
+@media print {
+  body { background: white; color: black; }
+  .skip-link, #app, #toasts, #dialog .dialog-head button, #dialog .order-controls { display: none !important; }
+  #dialog[open] {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+  #dialog::backdrop { display: none !important; }
+  #dialog .dialog-head, #dialog .dialog-body { padding: 12px 0 !important; }
+  #dialog .order-printable { break-inside: avoid; }
+}

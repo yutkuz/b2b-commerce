@@ -1,6 +1,6 @@
 # U1 Business — B2B bayi sipariş uygulaması
 
-U1 Business, bayi ve yöneticilerin kullandığı küçük bir B2B e-ticaret uygulamasıdır. Bayi ürünleri arar, sepete ekler ve sipariş oluşturur. Yönetici ürünleri ve bayi hesaplarını düzenler, siparişleri onaylar veya reddeder. Uygulama **ASP.NET Core 10**, **Entity Framework Core**, **SQL Server** ve HTML/CSS/JavaScript ile geliştirilmiştir. Ayrı frontend sunucusu veya Node.js kurulumu gerekmez.
+U1 Business, bayi ve yöneticilerin kullandığı küçük bir B2B e-ticaret uygulamasıdır. Bayi ürünleri arar, sepete ekler ve sipariş oluşturur. Yönetici ürünleri, bayi hesaplarını ve sipariş süreçlerini yönetir. Uygulama **ASP.NET Core 10**, **Entity Framework Core**, **SQL Server** ve HTML/CSS/JavaScript ile geliştirilmiştir. Ayrı frontend sunucusu veya Node.js kurulumu gerekmez.
 
 Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL Server LocalDB kullanır. Demo ürünler, fiyatlar, kullanıcılar ve firma metinleri gerçek ticari veri değildir. Uygulama ödeme veya cari hesap sistemi değildir.
 
@@ -108,7 +108,7 @@ dotnet run --project src/U1.Business/U1.Business.csproj --no-launch-profile -- -
 3. Ürün adına basıp detay penceresini açın. Stok işaretleri: **Var** (kritik eşikten fazla), **Kritik** (0'dan fazla ve eşiğe eşit/altında), **Yok** (0).
 4. Satırdan veya detaydan adet seçip **Sepete ekle** deyin. Aynı ürünün adetleri tek satırda birleşir. **Sepetim** ekranında adedi değiştirin veya ürünü çıkarın. Bir ürün sepetinde en fazla 1.000.000 adet tutulur.
 5. İsterseniz sipariş notu girin. **Siparişi gözden geçir** ekranında satırları ve toplamı inceleyin. **Siparişi oluştur** dediğinizde sunucu stok ve fiyatı yeniden denetler. Sepet veya fiyat değişmişse yeni bilgileri ayrıca onaylamanız istenir.
-6. **Siparişlerim** ekranında numara, tarih, toplam, durum ve kalemleri görün. İlk durum **Bekliyor**'dur; yönetici kararı sonrası liste yenilenince **Onaylandı** veya **Reddedildi** görünür. Red halinde stok iade edilir.
+6. **Siparişlerim** ekranında numara, tarih, toplam, durum ve kalemleri görün. Detayda durum geçmişi ve varsa ret/iptal nedeni yer alır. **Yazdır / PDF** tarayıcının yazdırma ekranını açar; PDF olarak kaydedebilirsiniz. **Yeniden sepete ekle** eski sipariş kalemlerini güncel fiyat, stok ve satış durumuyla önizletir; seçtiklerinizi sepete koyar, otomatik sipariş oluşturmaz.
 
 Üstteki sepet özeti gerçek adet ve toplamı gösterir. **Hesabım** kişi/firma bilgilerini gösterir; bayi bu sürümde profilini kendisi düzenlemez. **Destek**, **Online ödeme**, **Banka bilgileri** ve **bakiye** alanları bilgi/örnek ekranlarıdır; gerçek ödeme almaz ve geçerli IBAN sunmaz. Hakkımızda, İade, Gizlilik ve Satış sözleşmesi sayfalarındaki metinler de örnektir.
 
@@ -122,14 +122,14 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | Ürün yönetimi | Ürün ekleme/düzenleme; fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme; ürünü neden kaydıyla arşivleme/geri açma |
 | Kategori yönetimi | Kategori ekleme/yeniden adlandırma; bir kategorinin ürünlerini hedef kategoriye taşıyarak birleştirme |
 | Bayiler | Kullanıcı arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama |
-| Sipariş yönetimi | Siparişleri arama/filtreleme, detay, onay ve red |
+| Sipariş yönetimi | Siparişleri arama/filtreleme, durum geçmişi, onay/hazırlama/sevk/teslim, gerekçeli ret/iptal ve yalnız yöneticiye açık not |
 | Katalog düzeni | Kolon başlığı, sırası, genişliği, hizalaması, gösterimi ve cihaz görünürlüğü |
 | Duyurular | Ana sayfa metni, arama eylemi, sıra ve yayın durumu |
 | İşlem geçmişi | Tarih, ürün, kullanıcı ve işlem türüne göre stok hareketleri ile kritik yönetici olaylarını filtreleme |
 
 PNG/JPEG/WebP görsel yükleme sınırı 4 MB'dir; dosyalar `src/U1.Business/wwwroot/uploads` klasörüne yazılır. Eski bir ürün formu açıkken başka işlem ürünü veya stoğu değiştirirse kayıt reddedilir; uyarıdan sonra güncel ürünü yükleyin. Stok sayısını değiştirmek fiziksel stok düzeltmesi anlamına gelir ve bir neden girilmesini gerektirir. Sipariş stok düşümü, red iadesi ve manuel düzeltmeler önceki/yeni bakiye ile işlem geçmişinde tutulur. Ürünler fiziksel olarak silinmez; arşivlenen ürün katalogdan ve yeni siparişlerden çıkar, mevcut sepette kaldırılması gereken ürün olarak görünür. Kategori birleştirme ürünleri hedef kategoriye taşır ve eski sipariş snapshot'larını değiştirmez.
 
-Sipariş **Bekliyor → Onaylandı** veya **Bekliyor/Onaylandı → Reddedildi** yönünde değişebilir. Reddedilen sipariş yeniden açılamaz; stok yalnız bir kez iade edilir. “Onaylandı”, sevk veya fatura kesildiği anlamına gelmez.
+Sipariş akışı **Bekliyor → Onaylandı → Hazırlanıyor → Sevk edildi → Teslim edildi** şeklindedir. **Bekliyor**, **Onaylandı** ve **Hazırlanıyor** aşamalarında gerekçeli ret veya iptal mümkündür; stok tek kez iade edilir. **Sevk edildi** durumundan sonra doğrudan ret/iptal ve stok iadesi yapılamaz; ayrı iade süreci bu uygulamada yoktur. Ret/iptal ve teslim durumları son durumdur. Yönetici notu bayiye gösterilmez. “Onaylandı”, sevk veya fatura kesildiği anlamına gelmez.
 
 ## Veritabanı ve yapılandırma
 
@@ -159,7 +159,7 @@ Eski kurulumda yarım kalmış demo kayıtları saptanırsa uygulama açıklayı
 
 Tek ASP.NET Core uygulaması hem sayfaları hem `/api` yollarını sunar. `Program.cs` sunucu, cookie oturumu, rol denetimi, CSRF koruması ve hata yanıtlarını kurar. `Endpoints/` kimlik, katalog, sepet/sipariş ve yönetim API'lerini içerir. `BusinessDbContext` EF Core modelini ve SQL şemasıyla eşleşen temel index/ilişki metadata'sını tanımlar. `Services/OrderService.cs` kritik sipariş işlemini transaction içinde yürütür. `Data/Database.cs` veritabanı oluşturma, SQL-first şema yükseltme ve demo kurulumunu yönetir. SQL Server'a özgü `UPDLOCK`, `HOLDLOCK` ve `sp_getapplock` gereken kritik yerlerde EF Core üzerinden ham SQL/ADO.NET kullanılır. `wwwroot/` tarayıcı arayüzüdür.
 
-Users, Categories, Products, Carts, CartItems, Orders, OrderItems, GridColumns, Banners, StockMovements, AdminEvents, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
+Users, Categories, Products, Carts, CartItems, Orders, OrderItems, OrderStatusHistory, GridColumns, Banners, StockMovements, AdminEvents, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
 
 Sipariş, stok düşümü, stok hareketi ve sepet temizliği tek transaction içindedir; biri başarısızsa tümü geri alınır. Red iadesi ile yönetici olayı da sipariş durumuyla aynı transaction'dadır. Aynı sipariş isteğinin tekrarı ikinci sipariş veya stok hareketi oluşturmaz. Eski yönetici ürün formu güncel stoğu ezemez. Bayi yalnız kendi siparişlerini görür; yönetim API'leri ve salt okunur işlem geçmişi Admin rolü ister. Parola/hash, cookie ve token değerleri işlem geçmişine yazılmaz. Parolalar hash'lenir. Cookie HttpOnly/SameSite, değiştirici işlemlerde CSRF, giriş/kayıtta hız sınırı ve SQL sorgularında parametreleme kullanılır.
 
@@ -212,9 +212,9 @@ GitHub Actions temiz Windows ortamında NuGet geri yükleme, uygulama ve test pr
 
 ### Doğrulanan kapsam
 
-CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün ve kategori `rowversion` çakışması, kategori birleştirme, ürün arşivleme/geri açma, arşiv ürününün katalog/sayım/sepet/checkout kuralları ve eski sipariş snapshot'ının korunması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
+CI kapsamı; test veritabanı izolasyonu, anonim/rol erişim sınırları, CSRF, telefon ve ürün doğrulaması, özel kod araması, ürün ve kategori `rowversion` çakışması, kategori birleştirme, ürün arşivleme/geri açma, arşiv ürününün katalog/sayım/sepet/checkout kuralları ve eski sipariş snapshot'ının korunması, sepet toplamı, stok azalması sonrası checkout reddi, checkout idempotency, sipariş fiyat snapshot'ı, başka bayinin siparişine erişememesi, red/iptal sonrası stok iadesinin ve stok hareketinin yalnız bir kez yapılması, rollback sırasında hareket/olay kaydının da geri alınması, geçersiz sipariş durumları, gizli yönetici notu, güncel fiyat ve satış durumuyla yeniden sepete ekleme, geçmiş filtreleri, hassas verinin geçmişe yazılmaması, admin grid/banner güncellemeleri, kullanıcı oturum versiyonu ve 8 eşzamanlı bayi checkout senaryosunu kapsar.
 
-Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması; ayrıca yönetici işlem geçmişi filtresi kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
+Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipariş oluşturma, sipariş detayı, yönetici onayı ve onayın bayi ekranına yansıması; kategori/arşiv akışları, eski siparişten sepete ekleme, siparişin yazdırma düzeninden PDF üretimi ve yönetici notunun bayiye gösterilmemesi kontrol edildi. Visual Studio IDE bu bilgisayarda kurulu olmadığından F5 akışı IDE içinde denenmedi; çözüm dosyası .NET CLI ile derlendi. Harici SQL Server ve üretim dağıtımı bu doğrulamanın kapsamında değildir.
 
 ## Yeni bilgisayarda kurulum özeti
 

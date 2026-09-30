@@ -126,6 +126,12 @@ public sealed class OrderService(
 
         db.Orders.Add(order);
         await db.SaveChangesAsync();
+        db.OrderStatusHistory.Add(new OrderStatusHistory
+        {
+            OrderId = order.Id,
+            ToStatus = order.Status,
+            ActorUserId = userId
+        });
 
         foreach (var line in cartLines)
         {
@@ -294,16 +300,20 @@ public sealed class OrderService(
         "-" +
         Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
 
-    public async Task ChangeStatus(int id, string status, int actorUserId)
+    public async Task ChangeStatus(int id, StatusInput input, int actorUserId)
     {
-        if (status is not ("Onaylandı" or "Reddedildi"))
+        if (input.Status is not ("Onaylandı" or "Hazırlanıyor" or "Sevk edildi" or "Teslim edildi" or "Reddedildi" or "İptal edildi"))
             throw new BusinessException("Geçersiz sipariş durumu.");
+        if (input.Reason?.Length > 300)
+            throw new BusinessException("Ret veya iptal nedeni en fazla 300 karakter olabilir.");
+        if (input.Status is "Reddedildi" or "İptal edildi" && string.IsNullOrWhiteSpace(input.Reason))
+            throw new BusinessException("Ret veya iptal nedeni gerekli.");
 
         for (var attempt = 1; attempt <= MaxTransientAttempts; attempt++)
         {
             try
             {
-                await ChangeStatusOnce(id, status, actorUserId);
+                await ChangeStatusOnce(id, input, actorUserId);
                 return;
             }
             catch (Exception ex) when (IsTransientSqlFailure(ex) && attempt < MaxTransientAttempts)
@@ -319,7 +329,7 @@ public sealed class OrderService(
         throw new InvalidOperationException("Sipariş durumu yeniden deneme döngüsü beklenmeyen şekilde sona erdi.");
     }
 
-    private async Task ChangeStatusOnce(int id, string status, int actorUserId)
+    private async Task ChangeStatusOnce(int id, StatusInput input, int actorUserId)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
@@ -329,29 +339,189 @@ public sealed class OrderService(
             .SingleOrDefaultAsync()
             ?? throw new BusinessException("Sipariş bulunamadı.", 404);
 
-        if (order.Status == status)
+        if (order.Status == input.Status)
         {
             await tx.CommitAsync();
             return;
         }
 
-        if (order.Status == "Reddedildi")
-            throw new BusinessException("Reddedilen sipariş yeniden açılamaz. Yeni sipariş oluşturun.", 409);
+        if (input.RowVersion is not { Length: 8 })
+            throw new BusinessException("Sipariş sürümü gerekli.");
+        if (!order.RowVersion.AsSpan().SequenceEqual(input.RowVersion))
+            throw new BusinessException("Sipariş başka bir işlemde değişti. Yeniden yükleyin.", 409, "ORDER_CHANGED");
+        if (!CanTransition(order.Status, input.Status))
+            throw new BusinessException("Bu sipariş durumu geçişine izin verilmiyor.", 409, "ORDER_STATUS_INVALID");
 
         var previousStatus = order.Status;
+        var reason = input.Reason?.Trim() ?? "";
         var audit = AuditTrail.Event(
             actorUserId,
             "OrderStatusChanged",
             "Order",
             order.Id,
-            $"{order.Number} numaralı siparişin durumu {previousStatus} değerinden {status} değerine güncellendi.");
+            $"{order.Number} numaralı siparişin durumu {previousStatus} değerinden {input.Status} değerine güncellendi.");
         db.AdminEvents.Add(audit);
         await db.SaveChangesAsync();
 
-        if (status == "Reddedildi")
-            await RestoreStock(db, order, actorUserId, audit.Id);
+        if (input.Status is "Reddedildi" or "İptal edildi")
+            await RestoreStock(db, order, actorUserId, audit.Id, input.Status);
 
-        order.Status = status;
+        order.Status = input.Status;
+        if (input.Status is "Reddedildi" or "İptal edildi")
+            order.RejectionReason = reason;
+        db.OrderStatusHistory.Add(new OrderStatusHistory
+        {
+            OrderId = order.Id,
+            FromStatus = previousStatus,
+            ToStatus = input.Status,
+            ActorUserId = actorUserId,
+            Reason = reason
+        });
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
+    }
+
+    private static bool CanTransition(string current, string next) => current switch
+    {
+        "Bekliyor" => next is "Onaylandı" or "Reddedildi" or "İptal edildi",
+        "Onaylandı" => next is "Hazırlanıyor" or "Reddedildi" or "İptal edildi",
+        "Hazırlanıyor" => next is "Sevk edildi" or "Reddedildi" or "İptal edildi",
+        "Sevk edildi" => next == "Teslim edildi",
+        _ => false
+    };
+
+    public async Task UpdateAdminNote(int id, OrderNoteInput input, int actorUserId)
+    {
+        if (input.Note is null || input.Note.Length > 1000)
+            throw new BusinessException("Yönetici notu en fazla 1000 karakter olabilir.");
+        if (input.RowVersion is not { Length: 8 })
+            throw new BusinessException("Sipariş sürümü gerekli.");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        var order = await db.Orders
+            .FromSqlInterpolated($"SELECT * FROM Orders WITH(UPDLOCK,HOLDLOCK) WHERE Id={id}")
+            .SingleOrDefaultAsync()
+            ?? throw new BusinessException("Sipariş bulunamadı.", 404);
+        if (!order.RowVersion.AsSpan().SequenceEqual(input.RowVersion))
+            throw new BusinessException("Sipariş başka bir işlemde değişti. Yeniden yükleyin.", 409, "ORDER_CHANGED");
+
+        var note = input.Note.Trim();
+        if (order.AdminNote == note)
+        {
+            await tx.CommitAsync();
+            return;
+        }
+
+        order.AdminNote = note;
+        db.AdminEvents.Add(AuditTrail.Event(
+            actorUserId, "OrderAdminNoteChanged", "Order", order.Id,
+            $"{order.Number} numaralı siparişin yönetici notu güncellendi."));
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
+    }
+
+    public async Task<object> ReaddPreview(int userId, int orderId)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        if (!await db.Orders.AsNoTracking().AnyAsync(x => x.Id == orderId && x.UserId == userId))
+            throw new BusinessException("Sipariş bulunamadı.", 404);
+
+        var items = await (
+            from line in db.OrderItems.AsNoTracking()
+            join product in db.Products.AsNoTracking() on line.ProductId equals product.Id
+            where line.OrderId == orderId
+            orderby line.ProductId
+            select new
+            {
+                line.ProductId,
+                line.ProductCode,
+                line.ProductName,
+                line.Quantity,
+                PreviousUnitPrice = line.UnitPrice,
+                CurrentUnitPrice = product.Price,
+                product.Stock,
+                product.IsArchived
+            }).ToListAsync();
+        var cartQuantities = await (
+            from cart in db.Carts.AsNoTracking()
+            join cartItem in db.CartItems.AsNoTracking() on cart.Id equals cartItem.CartId
+            where cart.UserId == userId
+            select new { cartItem.ProductId, cartItem.Quantity })
+            .ToDictionaryAsync(x => x.ProductId, x => x.Quantity);
+        return new
+        {
+            items = items.Select(item => new
+            {
+                item.ProductId,
+                item.ProductCode,
+                item.ProductName,
+                item.Quantity,
+                item.PreviousUnitPrice,
+                item.CurrentUnitPrice,
+                item.Stock,
+                item.IsArchived,
+                ExistingCartQuantity = cartQuantities.GetValueOrDefault(item.ProductId),
+                CanAdd = !item.IsArchived &&
+                    item.Quantity + (long)cartQuantities.GetValueOrDefault(item.ProductId) <= 1_000_000 &&
+                    item.Stock >= item.Quantity + (long)cartQuantities.GetValueOrDefault(item.ProductId)
+            }).ToList()
+        };
+    }
+
+    public async Task ReaddToCart(int userId, int orderId, ReaddInput input)
+    {
+        var requested = input.Lines;
+        if (requested is null || requested.Length == 0 || requested.Any(x =>
+                x is null || x.ProductId <= 0 || x.Quantity <= 0 || x.UnitPrice <= 0)
+            || requested.Select(x => x.ProductId).Distinct().Count() != requested.Length)
+            throw new BusinessException("Sepete eklenecek sipariş kalemleri geçersiz.");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        var cart = await db.Carts
+            .FromSqlInterpolated($"SELECT * FROM Carts WITH(UPDLOCK,HOLDLOCK) WHERE UserId={userId}")
+            .SingleOrDefaultAsync()
+            ?? throw new BusinessException("Sepet bulunamadı.", 404);
+        if (!await db.Orders.AsNoTracking().AnyAsync(x => x.Id == orderId && x.UserId == userId))
+            throw new BusinessException("Sipariş bulunamadı.", 404);
+
+        var originals = await db.OrderItems.AsNoTracking()
+            .Where(x => x.OrderId == orderId)
+            .ToDictionaryAsync(x => x.ProductId);
+
+        foreach (var line in requested.OrderBy(x => x.ProductId))
+        {
+            if (!originals.TryGetValue(line.ProductId, out var original)
+                || original.Quantity != line.Quantity)
+                throw new BusinessException("Sipariş kalemleri değişti. Önizlemeyi yeniden açın.", 409, "ORDER_LINES_CHANGED");
+
+            var product = await db.Products
+                .FromSqlInterpolated($"SELECT * FROM Products WITH(UPDLOCK,HOLDLOCK) WHERE Id={line.ProductId}")
+                .SingleOrDefaultAsync()
+                ?? throw new BusinessException("Ürün artık bulunamıyor.", 409, "PRODUCT_UNAVAILABLE");
+            if (product.IsArchived)
+                throw new BusinessException("Ürün artık satışta değil.", 409, "PRODUCT_ARCHIVED");
+            if (product.Price != line.UnitPrice)
+                throw new BusinessException("Ürün fiyatı değişti. Güncel tutarı yeniden onaylayın.", 409, "PRICE_CHANGED");
+
+            var cartItem = await db.CartItems.SingleOrDefaultAsync(x =>
+                x.CartId == cart.Id && x.ProductId == line.ProductId);
+            var totalQuantity = (long)(cartItem?.Quantity ?? 0) + line.Quantity;
+            if (totalQuantity > 1_000_000 || totalQuantity > product.Stock)
+                throw new BusinessException("Ürün için yeterli stok yok. Güncel sepeti kontrol edin.", 409, "INSUFFICIENT_STOCK");
+
+            if (cartItem is null)
+                db.CartItems.Add(new CartItem
+                {
+                    CartId = cart.Id,
+                    ProductId = line.ProductId,
+                    Quantity = (int)totalQuantity
+                });
+            else
+                cartItem.Quantity = (int)totalQuantity;
+        }
+
         await db.SaveChangesAsync();
         await tx.CommitAsync();
     }
@@ -360,7 +530,8 @@ public sealed class OrderService(
         BusinessDbContext db,
         Order order,
         int actorUserId,
-        long adminEventId)
+        long adminEventId,
+        string status)
     {
         var lines = await db.OrderItems
             .AsNoTracking()
@@ -389,8 +560,8 @@ public sealed class OrderService(
                 product.Id,
                 previousStock,
                 product.Stock,
-                "OrderRejected",
-                $"{order.Number} numaralı sipariş reddedildiği için stok iade edildi.",
+                status == "İptal edildi" ? "OrderCancelled" : "OrderRejected",
+                $"{order.Number} numaralı sipariş {status.ToLowerInvariant()} için stok iade edildi.",
                 actorUserId,
                 order.Id,
                 adminEventId));

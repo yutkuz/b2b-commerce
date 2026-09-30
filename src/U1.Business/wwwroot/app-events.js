@@ -1,4 +1,4 @@
-import { adminAction, adminSubmit } from './admin.js?v=20260929b';
+import { adminAction, adminSubmit } from './admin.js?v=20260930a';
 import {
     api,
     closeModal,
@@ -25,7 +25,7 @@ import {
     saveDraftNote,
     submitCheckout,
 } from './checkout.js?v=20260929b';
-import { showOrder } from './orders.js?v=20260928a';
+import { showOrder, showReaddPreview } from './orders.js?v=20260930a';
 
 let renderPage;
 let resetFiltersHandler;
@@ -109,6 +109,30 @@ async function handleActionClick(event) {
                 rememberModalTrigger(element);
                 await showOrder(id);
                 return;
+
+            case 'print-order':
+                window.print();
+                return;
+
+            case 'readd-preview':
+                await showReaddPreview(id);
+                return;
+
+            case 'confirm-readd': {
+                const lines = [...document.querySelectorAll('[data-readd-line]:checked')].map(input => ({
+                    productId: Number(input.dataset.productId),
+                    quantity: Number(input.dataset.quantity),
+                    unitPrice: Number(input.dataset.price),
+                }));
+                if (!lines.length) throw new Error('Sepete eklenecek uygun ürün seçin.');
+                await api('/orders/' + id + '/readd', { method: 'POST', body: { lines } });
+                resetCheckoutApproval();
+                await refreshCart();
+                closeModal();
+                go('cart');
+                toast('Seçilen ürünler sepete eklendi.');
+                return;
+            }
 
             case 'category':
                 state.filters.category = element.dataset.id;
@@ -300,6 +324,15 @@ async function submitOrderStatus(form, data) {
     toast('Sipariş durumu güncellendi.');
 }
 
+async function submitOrderAdminNote(form, data) {
+    await api('/admin/orders/' + form.dataset.id + '/note', {
+        method: 'PUT',
+        body: data,
+    });
+    await showOrder(Number(form.dataset.id));
+    toast('Yönetici notu kaydedildi.');
+}
+
 async function handleSubmit(event) {
     const form = event.target;
 
@@ -346,6 +379,10 @@ async function handleSubmit(event) {
 
             case 'order-status':
                 await submitOrderStatus(form, data);
+                return;
+
+            case 'order-admin-note':
+                await submitOrderAdminNote(form, data);
                 return;
 
             default:

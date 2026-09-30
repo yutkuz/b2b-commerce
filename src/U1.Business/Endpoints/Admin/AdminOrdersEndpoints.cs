@@ -56,7 +56,31 @@ public static partial class AdminEndpoints
             {
                 if (input is null)
                     throw new BusinessException("Sipariş durumu gerekli.");
-                await orders.ChangeStatus(id, input.Status, c.UserId());
+                await orders.ChangeStatus(id, input, c.UserId());
+                return Results.Ok();
+            }
+        );
+
+        api.MapGet(
+            "/orders/{id:int}/internal",
+            async (int id, BusinessDbContext db) =>
+            {
+                var order = await db.Orders.AsNoTracking()
+                    .Where(x => x.Id == id)
+                    .Select(x => new { x.AdminNote })
+                    .SingleOrDefaultAsync()
+                    ?? throw new BusinessException("Sipariş bulunamadı.", 404);
+                return order;
+            }
+        );
+
+        api.MapPut(
+            "/orders/{id:int}/note",
+            async (int id, OrderNoteInput input, OrderService orders, HttpContext c) =>
+            {
+                if (input is null)
+                    throw new BusinessException("Yönetici notu gerekli.");
+                await orders.UpdateAdminNote(id, input, c.UserId());
                 return Results.Ok();
             }
         );

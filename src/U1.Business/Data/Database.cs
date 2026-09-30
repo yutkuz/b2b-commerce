@@ -71,7 +71,7 @@ public sealed class Database(
 
         await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.001-schema.sql"));
         var version = await db.SchemaVersions.MaxAsync(x => (int?)x.Version) ?? 0;
-        if (version > 6)
+        if (version > 7)
             throw new InvalidOperationException("Veritabanı şeması bu uygulamadan daha yeni.");
 
         if (version < 2)
@@ -106,6 +106,13 @@ public sealed class Database(
         {
             await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.007-catalog-management.sql"));
             db.SchemaVersions.Add(new SchemaVersion { Version = 6 });
+            await db.SaveChangesAsync();
+        }
+
+        if (version < 7)
+        {
+            await db.Database.ExecuteSqlRawAsync(await ReadResource(assembly, "U1.Business.Data.008-order-operations.sql"));
+            db.SchemaVersions.Add(new SchemaVersion { Version = 7 });
             await db.SaveChangesAsync();
         }
 
@@ -255,22 +262,22 @@ public sealed class Database(
         db.Products.AddRange(items);
 
         db.GridColumns.AddRange(
-            new GridColumn { Field="imageUrl", Label="Ürün", RenderType="image", Position=0, Width=76, Mobile=false },
-            new GridColumn { Field="code", Label="Ürün kodu", Position=1, Width=112, Mobile=false },
-            new GridColumn { Field="name", Label="Ürün adı", RenderType="product", Position=2, Width=290 },
-            new GridColumn { Field="brand", Label="Marka", Position=3, Width=150, Mobile=false },
-            new GridColumn { Field="stock", Label="Stok", RenderType="stock", Position=4, Width=105, Mobile=false },
-            new GridColumn { Field="price", Label="Birim fiyat", RenderType="money", Position=5, Width=125, Align="right" },
-            new GridColumn { Field="quantity", Label="Adet / Sepete ekle", RenderType="purchase", Position=6, Width=180, Align="right" },
-            new GridColumn { Field="manufacturerCode", Label="Üretici kodu", Position=7, Width=130, Desktop=false, Tablet=false, Mobile=false },
-            new GridColumn { Field="specialCode1", Label="Özel kod 1", Position=8, Width=130, Desktop=false, Tablet=false, Mobile=false },
-            new GridColumn { Field="specialCode2", Label="Özel kod 2", Position=9, Width=130, Desktop=false, Tablet=false, Mobile=false },
-            new GridColumn { Field="description", Label="Açıklama", Position=10, Width=280, Desktop=false, Tablet=false, Mobile=false }
+            new GridColumn { Field = "imageUrl", Label = "Ürün", RenderType = "image", Position = 0, Width = 76, Mobile = false },
+            new GridColumn { Field = "code", Label = "Ürün kodu", Position = 1, Width = 112, Mobile = false },
+            new GridColumn { Field = "name", Label = "Ürün adı", RenderType = "product", Position = 2, Width = 290 },
+            new GridColumn { Field = "brand", Label = "Marka", Position = 3, Width = 150, Mobile = false },
+            new GridColumn { Field = "stock", Label = "Stok", RenderType = "stock", Position = 4, Width = 105, Mobile = false },
+            new GridColumn { Field = "price", Label = "Birim fiyat", RenderType = "money", Position = 5, Width = 125, Align = "right" },
+            new GridColumn { Field = "quantity", Label = "Adet / Sepete ekle", RenderType = "purchase", Position = 6, Width = 180, Align = "right" },
+            new GridColumn { Field = "manufacturerCode", Label = "Üretici kodu", Position = 7, Width = 130, Desktop = false, Tablet = false, Mobile = false },
+            new GridColumn { Field = "specialCode1", Label = "Özel kod 1", Position = 8, Width = 130, Desktop = false, Tablet = false, Mobile = false },
+            new GridColumn { Field = "specialCode2", Label = "Özel kod 2", Position = 9, Width = 130, Desktop = false, Tablet = false, Mobile = false },
+            new GridColumn { Field = "description", Label = "Açıklama", Position = 10, Width = 280, Desktop = false, Tablet = false, Mobile = false }
         );
 
         db.Banners.AddRange(
-            new Banner { Title="Doğru teşhis. Güçlü servis.", Subtitle="Profesyonel diagnostik çözümlerini tek bir yerden keşfedin.", ButtonText="Cihazları incele", SearchTerm="Diagnostik", IsActive=true, Position=0 },
-            new Banner { Title="Her bağlantıda güven.", Subtitle="Servisinizin ihtiyaç duyduğu kablo ve adaptörler.", ButtonText="Bağlantı ürünleri", SearchTerm="kablo", IsActive=true, Position=1 }
+            new Banner { Title = "Doğru teşhis. Güçlü servis.", Subtitle = "Profesyonel diagnostik çözümlerini tek bir yerden keşfedin.", ButtonText = "Cihazları incele", SearchTerm = "Diagnostik", IsActive = true, Position = 0 },
+            new Banner { Title = "Her bağlantıda güven.", Subtitle = "Servisinizin ihtiyaç duyduğu kablo ve adaptörler.", ButtonText = "Bağlantı ürünleri", SearchTerm = "kablo", IsActive = true, Position = 1 }
         );
 
         await db.SaveChangesAsync();

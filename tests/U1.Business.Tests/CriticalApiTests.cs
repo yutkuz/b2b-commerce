@@ -70,6 +70,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
         await db.StockMovements.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
         await db.AdminEvents.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+        await db.OrderStatusHistory.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
         await db.OrderItems.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
         await db.Orders.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
 
@@ -396,7 +397,13 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
             ApiTest.Property(ApiTest.Property(orderDetail, "items")[0], "unitPrice").GetDecimal());
 
         var reject = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/orders/{orderId}/status",
-            new { status = "Reddedildi" }, adminToken);
+            new
+            {
+                status = "Reddedildi",
+                reason = "CI ret",
+                rowVersion =
+                ApiTest.Property(ApiTest.Property(orderDetail, "order"), "rowVersion").GetString()
+            }, adminToken);
         Assert.Equal(HttpStatusCode.OK, reject.StatusCode);
 
         var rejectedOrder = await buyer.GetFromJsonAsync<JsonElement>($"/api/orders/{orderId}", TestContext.Current.CancellationToken);
@@ -406,7 +413,13 @@ public sealed class ApiSecurityAndBusinessRulesTests(ApiFactory factory) : IClas
         Assert.Equal(5, ApiTest.Property(afterReject, "stock").GetInt32());
 
         var repeatReject = await ApiTest.SendJson(admin, HttpMethod.Put, $"/api/admin/orders/{orderId}/status",
-            new { status = "Reddedildi" }, adminToken);
+            new
+            {
+                status = "Reddedildi",
+                reason = "CI ret",
+                rowVersion =
+                ApiTest.Property(ApiTest.Property(orderDetail, "order"), "rowVersion").GetString()
+            }, adminToken);
         Assert.Equal(HttpStatusCode.OK, repeatReject.StatusCode);
         var afterRepeatReject = await buyer.GetFromJsonAsync<JsonElement>($"/api/products/{productId}", TestContext.Current.CancellationToken);
         Assert.Equal(5, ApiTest.Property(afterRepeatReject, "stock").GetInt32());

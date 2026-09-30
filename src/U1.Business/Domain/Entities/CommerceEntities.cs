@@ -23,6 +23,20 @@ public sealed class Order
     public decimal Total { get; set; }
     public Guid RequestId { get; set; }
     public string Note { get; set; } = "";
+    public string AdminNote { get; set; } = "";
+    public string RejectionReason { get; set; } = "";
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class OrderStatusHistory
+{
+    public long Id { get; set; }
+    public int OrderId { get; set; }
+    public string? FromStatus { get; set; }
+    public string ToStatus { get; set; } = "";
+    public int? ActorUserId { get; set; }
+    public string Reason { get; set; } = "";
+    public DateTime ChangedAt { get; set; }
 }
 
 public sealed class OrderItem

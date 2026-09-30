@@ -73,6 +73,23 @@ public static class CommerceEndpoints
         );
 
         api.MapGet(
+            "/orders/{id:int}/readd-preview",
+            async (int id, OrderService orders, HttpContext c) =>
+                await orders.ReaddPreview(c.UserId(), id)
+        );
+
+        api.MapPost(
+            "/orders/{id:int}/readd",
+            async (int id, ReaddInput input, OrderService orders, HttpContext c) =>
+            {
+                if (input is null)
+                    throw new BusinessException("Sepete eklenecek ürünler gerekli.");
+                await orders.ReaddToCart(c.UserId(), id, input);
+                return Results.Ok();
+            }
+        );
+
+        api.MapGet(
             "/orders",
             async (BusinessDbContext db, HttpContext c, int? page) =>
             {
@@ -114,6 +131,8 @@ public static class CommerceEndpoints
                         o.Total,
                         o.RequestId,
                         o.Note,
+                        o.RejectionReason,
+                        o.RowVersion,
                         u.FirstName,
                         u.LastName,
                         u.Company
@@ -135,7 +154,20 @@ public static class CommerceEndpoints
                     })
                     .ToListAsync();
 
-                return new { order, items };
+                var history = await db.OrderStatusHistory.AsNoTracking()
+                    .Where(x => x.OrderId == id)
+                    .OrderBy(x => x.ChangedAt)
+                    .ThenBy(x => x.Id)
+                    .Select(x => new
+                    {
+                        x.FromStatus,
+                        x.ToStatus,
+                        x.Reason,
+                        x.ChangedAt
+                    })
+                    .ToListAsync();
+
+                return new { order, items, history };
             }
         );
     }

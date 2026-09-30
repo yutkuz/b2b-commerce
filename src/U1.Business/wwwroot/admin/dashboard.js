@@ -7,7 +7,7 @@ import {
   heading,
   empty,
 } from "../app-core.js?v=20260928a";
-import { renderOrdersTable } from "../orders.js?v=20260928a";
+import { renderOrdersTable } from "../orders.js?v=20260930a";
 
 export async function dashboard() {
   const d = await api("/admin/dashboard");

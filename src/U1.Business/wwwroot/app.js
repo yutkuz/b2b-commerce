@@ -1,4 +1,4 @@
-import { renderAdmin } from './admin.js?v=20260929b';
+import { renderAdmin } from './admin.js?v=20260930a';
 import {
     portalRoutes,
     publicRoutes,
@@ -24,8 +24,8 @@ import {
     clearCheckoutSession,
     renderCartPage,
 } from './checkout.js?v=20260929b';
-import { bindAppEvents } from './app-events.js?v=20260929b';
-import { renderOrdersPage } from './orders.js?v=20260928a';
+import { bindAppEvents } from './app-events.js?v=20260930a';
+import { renderOrdersPage } from './orders.js?v=20260930a';
 
 const ROUTES = {
     home: ['Ana sayfa', 'home'],
