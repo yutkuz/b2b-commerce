@@ -112,10 +112,11 @@ public static partial class AdminEndpoints
 
         api.MapPost(
             "/products",
-            async (ProductInput input, BusinessDbContext db, HttpContext c) =>
+            async (ProductInput input, BusinessDbContext db, ProductImageStorage storage, HttpContext c) =>
             {
                 await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-                await ValidateProduct(input, db);
+                await ImageReferenceGuard.AcquireAsync(db, c.RequestAborted);
+                await ValidateProduct(input, db, storage, c.RequestAborted);
                 var product = ToProduct(input);
                 db.Products.Add(product);
                 await db.SaveChangesAsync();
@@ -143,7 +144,7 @@ public static partial class AdminEndpoints
 
         api.MapPut(
             "/products/{id:int}",
-            async (int id, ProductUpdateInput input, BusinessDbContext db, HttpContext c) =>
+            async (int id, ProductUpdateInput input, BusinessDbContext db, ProductImageStorage storage, HttpContext c) =>
             {
                 if (input is null)
                     throw new BusinessException("Ürün bilgileri gerekli.");
@@ -164,7 +165,8 @@ public static partial class AdminEndpoints
                     throw new BusinessException("Ürün sürümü geçersiz.");
 
                 await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-                await ValidateProduct(input, db);
+                await ImageReferenceGuard.AcquireAsync(db, c.RequestAborted);
+                await ValidateProduct(input, db, storage, c.RequestAborted);
                 var product = await db.Products.SingleOrDefaultAsync(x => x.Id == id)
                     ?? throw new BusinessException("Ürün bulunamadı.", 404);
                 var previousStock = product.Stock;
@@ -353,6 +355,7 @@ public static partial class AdminEndpoints
                 ImageCleanupInput input,
                 BusinessDbContext db,
                 ProductImageStorage storage,
+                ILogger<ProductImageStorage> logger,
                 HttpContext c) =>
             {
                 if (input is null || input.Urls is null || input.Urls.Length == 0)
@@ -361,6 +364,10 @@ public static partial class AdminEndpoints
                     throw new BusinessException(
                         $"Tek işlemde en fazla {storage.CleanupBatchLimit} görsel temizlenebilir.");
 
+                await using var tx = await db.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable,
+                    c.RequestAborted);
+                await ImageReferenceGuard.AcquireAsync(db, c.RequestAborted);
                 var references = (await db.Products
                         .AsNoTracking()
                         .Where(x => x.ImageUrl.StartsWith("/uploads/"))
@@ -368,18 +375,39 @@ public static partial class AdminEndpoints
                         .ToListAsync(c.RequestAborted))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                var deleted = await storage.DeleteUnusedAsync(
+                var staged = await storage.StageUnusedAsync(
                     input.Urls,
                     references,
                     c.RequestAborted);
-                db.AdminEvents.Add(AuditTrail.Event(
-                    c.UserId(),
-                    "ImageCleanup",
-                    "UploadStorage",
-                    null,
-                    $"{deleted.Count} kullanılmayan ürün görseli kontrollü temizlikle silindi."));
-                await db.SaveChangesAsync(c.RequestAborted);
-                return Results.Ok(new { deleted = deleted.Count });
+                try
+                {
+                    db.AdminEvents.Add(AuditTrail.Event(
+                        c.UserId(),
+                        "ImageCleanup",
+                        "UploadStorage",
+                        null,
+                        $"{staged.Images.Count} kullanılmayan ürün görseli {staged.OperationId} işlemiyle temizlik için ayrıldı."));
+                    await db.SaveChangesAsync(c.RequestAborted);
+                    await tx.CommitAsync(c.RequestAborted);
+                }
+                catch
+                {
+                    try
+                    {
+                        await tx.RollbackAsync(CancellationToken.None);
+                    }
+                    finally
+                    {
+                        await storage.RestoreStagedAsync(staged, CancellationToken.None);
+                    }
+                    throw;
+                }
+
+                var pending = await storage.FinalizeStagedAsync(
+                    staged,
+                    logger,
+                    CancellationToken.None);
+                return Results.Ok(new { deleted = staged.Images.Count - pending, pending });
             }
         ).RequireRateLimiting("image-upload");
     }
@@ -401,7 +429,11 @@ public static partial class AdminEndpoints
             throw ProductChanged();
     }
 
-    private static async Task ValidateProduct(ProductInput input, BusinessDbContext db)
+    private static async Task ValidateProduct(
+        ProductInput input,
+        BusinessDbContext db,
+        ProductImageStorage storage,
+        CancellationToken cancellationToken)
     {
         if (input is null)
             throw new BusinessException("Ürün bilgileri gerekli.");
@@ -423,7 +455,11 @@ public static partial class AdminEndpoints
         )
             throw new BusinessException("Görsel adresi bir yükleme yolu veya HTTPS adresi olmalı.");
 
-        if (!await db.Categories.AsNoTracking().AnyAsync(x => x.Id == input.CategoryId))
+        await storage.EnsureManagedReferenceExistsAsync(input.ImageUrl, cancellationToken);
+
+        if (!await db.Categories.AsNoTracking().AnyAsync(
+                x => x.Id == input.CategoryId,
+                cancellationToken))
             throw new BusinessException("Geçerli bir kategori seçin.");
     }
 

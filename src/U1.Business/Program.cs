@@ -137,6 +137,12 @@ app.Use(async (context, next) =>
     if (context.Request.Path.StartsWithSegments("/api"))
         context.Response.Headers.CacheControl = "no-store";
 
+    if (context.Request.Path.StartsWithSegments("/uploads/.pending-cleanup"))
+    {
+        context.Response.StatusCode = 404;
+        return;
+    }
+
     try
     {
         await next();

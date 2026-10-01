@@ -10,6 +10,13 @@ public sealed record ImageCleanupCandidate(
     DateTime DeleteAfterUtc,
     bool CanDelete);
 
+internal sealed record StagedImage(string Url, string OriginalPath, string StagedPath);
+
+internal sealed record ImageCleanupBatch(string OperationId, IReadOnlyList<StagedImage> Images)
+{
+    public IReadOnlyList<string> Urls => Images.Select(x => x.Url).ToArray();
+}
+
 public sealed class ProductImageStorage
 {
     private static readonly string[] ManagedExtensions = [".png", ".jpg", ".jpeg", ".webp"];
@@ -44,6 +51,23 @@ public sealed class ProductImageStorage
 
     public int CleanupBatchLimit { get; }
 
+    public async Task EnsureManagedReferenceExistsAsync(string url, CancellationToken cancellationToken)
+    {
+        if (!url.StartsWith("/uploads/", StringComparison.Ordinal))
+            return;
+
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            EnsureStorageRoot();
+            ResolveManagedPath(url, requireExisting: true);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task<string> SaveAsync(
         byte[] bytes,
         string extension,
@@ -56,7 +80,7 @@ public sealed class ProductImageStorage
         try
         {
             EnsureStorageRoot();
-            var usedBytes = SafeFiles().Sum(x => x.Length);
+            var usedBytes = StoredBytes();
             if (bytes.LongLength > totalQuotaBytes
                 || usedBytes > totalQuotaBytes - bytes.LongLength)
             {
@@ -133,7 +157,7 @@ public sealed class ProductImageStorage
         }
     }
 
-    public async Task<IReadOnlyList<string>> DeleteUnusedAsync(
+    internal async Task<ImageCleanupBatch> StageUnusedAsync(
         IEnumerable<string> urls,
         ISet<string> referencedUrls,
         CancellationToken cancellationToken)
@@ -178,15 +202,97 @@ public sealed class ProductImageStorage
                 paths.Add((url, path));
             }
 
-            foreach (var item in paths)
-                File.Delete(item.Path);
+            var operationId = Guid.NewGuid().ToString("N");
+            var stagingRoot = Path.Combine(uploadRoot, ".pending-cleanup");
+            var stagingFolder = Path.Combine(stagingRoot, operationId);
+            Directory.CreateDirectory(stagingRoot);
+            EnsureNoReparsePoint(stagingRoot);
+            Directory.CreateDirectory(stagingFolder);
+            EnsureNoReparsePoint(stagingFolder);
+            var staged = new List<StagedImage>(paths.Count);
+            try
+            {
+                foreach (var item in paths)
+                {
+                    var stagedPath = Path.Combine(stagingFolder, Path.GetFileName(item.Path));
+                    File.Move(item.Path, stagedPath);
+                    staged.Add(new StagedImage(item.Url, item.Path, stagedPath));
+                }
+            }
+            catch
+            {
+                foreach (var item in staged)
+                    File.Move(item.StagedPath, item.OriginalPath);
+                RemoveEmptyStagingFolder(stagingFolder);
+                throw;
+            }
 
-            return paths.Select(x => x.Url).ToArray();
+            return new ImageCleanupBatch(operationId, staged);
         }
         finally
         {
             gate.Release();
         }
+    }
+
+    internal async Task RestoreStagedAsync(
+        ImageCleanupBatch batch,
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (var image in batch.Images)
+                File.Move(image.StagedPath, image.OriginalPath);
+            if (batch.Images.Count > 0)
+                RemoveEmptyStagingFolder(Path.GetDirectoryName(batch.Images[0].StagedPath)!);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    internal async Task<int> FinalizeStagedAsync(
+        ImageCleanupBatch batch,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var pending = 0;
+            foreach (var image in batch.Images)
+            {
+                try
+                {
+                    File.Delete(image.StagedPath);
+                }
+                catch (IOException ex)
+                {
+                    pending++;
+                    logger.LogWarning(ex, "Görsel temizliği beklemede: {OperationId}", batch.OperationId);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    pending++;
+                    logger.LogWarning(ex, "Görsel temizliği beklemede: {OperationId}", batch.OperationId);
+                }
+            }
+            if (batch.Images.Count > 0)
+                RemoveEmptyStagingFolder(Path.GetDirectoryName(batch.Images[0].StagedPath)!);
+            return pending;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private static void RemoveEmptyStagingFolder(string folder)
+    {
+        if (Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+            Directory.Delete(folder);
     }
 
     private void EnsureStorageRoot()
@@ -217,6 +323,33 @@ public sealed class ProductImageStorage
 
             yield return new FileInfo(path);
         }
+    }
+
+    private long StoredBytes()
+    {
+        var used = SafeFiles().Sum(x => x.Length);
+        var stagingRoot = Path.Combine(uploadRoot, ".pending-cleanup");
+        if (!Directory.Exists(stagingRoot))
+            return used;
+
+        EnsureNoReparsePoint(stagingRoot);
+        foreach (var folder in Directory.EnumerateFileSystemEntries(stagingRoot))
+        {
+            var attributes = File.GetAttributes(folder);
+            if ((attributes & FileAttributes.ReparsePoint) != 0
+                || (attributes & FileAttributes.Directory) == 0)
+                throw UnsafeStorage();
+
+            foreach (var file in Directory.EnumerateFileSystemEntries(folder))
+            {
+                attributes = File.GetAttributes(file);
+                if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+                    throw UnsafeStorage();
+                used = checked(used + new FileInfo(file).Length);
+            }
+        }
+
+        return used;
     }
 
     private string ResolveManagedPath(string url, bool requireExisting)
@@ -286,4 +419,10 @@ public sealed class ProductImageStorage
             "Yalnızca uploads klasöründeki doğrulanmış ürün görselleri temizlenebilir.",
             400,
             "IMAGE_PATH_INVALID");
+
+    private static BusinessException UnsafeStorage() =>
+        new(
+            "Görsel depolama alanında güvenli olmayan bir bağlantı veya dosya bulundu.",
+            503,
+            "IMAGE_STORAGE_UNSAFE");
 }
