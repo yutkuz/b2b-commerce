@@ -396,9 +396,25 @@ public static partial class AdminEndpoints
                     {
                         await tx.RollbackAsync(CancellationToken.None);
                     }
-                    finally
+                    catch (Exception rollbackError)
+                    {
+                        logger.LogError(rollbackError,
+                            "Görsel temizliği transaction geri alma hatası: {OperationId}",
+                            staged.OperationId);
+                    }
+                    try
                     {
                         await storage.RestoreStagedAsync(staged, CancellationToken.None);
+                    }
+                    catch (Exception restoreError)
+                    {
+                        logger.LogCritical(restoreError,
+                            "Görsel temizliği dosyaları elle kurtarılmalı: {OperationId}",
+                            staged.OperationId);
+                        throw new BusinessException(
+                            $"Görsel temizliği kurtarma gerektiriyor. İşlem: {staged.OperationId}",
+                            503,
+                            "IMAGE_RESTORE_REQUIRED");
                     }
                     throw;
                 }

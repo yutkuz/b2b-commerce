@@ -1,4 +1,4 @@
-import { adminAction, adminSubmit } from './admin.js?v=20261001b';
+import { adminAction, adminSubmit } from './admin.js?v=20261001d';
 import {
     api,
     closeModal,

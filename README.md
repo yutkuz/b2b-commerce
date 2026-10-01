@@ -121,6 +121,7 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | Genel bakış | Ürün/bayi sayısı, bekleyen siparişler, kritik stok |
 | Ürün yönetimi | Ürün ekleme/düzenleme; fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme; ürünü neden kaydıyla arşivleme/geri açma |
 | Kategori yönetimi | Kategori ekleme/yeniden adlandırma; bir kategorinin ürünlerini hedef kategoriye taşıyarak birleştirme |
+| CSV ürün aktarımı | Ürünleri dışa aktarma, dosya seçme, satır bazlı eski/yeni değer önizlemesi ve açık onayla toplu uygulama |
 | Kullanıcılar | Hesap arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama; son aktif yönetici ve kendi hesabını kapatma koruması |
 | Sipariş yönetimi | Siparişleri arama/filtreleme, durum geçmişi, onay/hazırlama/sevk/teslim, gerekçeli ret/iptal ve yalnız yöneticiye açık not |
 | Katalog düzeni | Kolon başlığı, sırası, genişliği, hizalaması, gösterimi ve cihaz görünürlüğü |
@@ -128,6 +129,8 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | İşlem geçmişi | Tarih, ürün, kullanıcı ve işlem türüne göre stok hareketleri ile kritik yönetici olaylarını filtreleme |
 
 PNG/JPEG/WebP görsel yükleme sınırı 4 MB'dir; dosyalar `src/U1.Business/wwwroot/uploads` klasörüne yazılır. Eski bir ürün formu açıkken başka işlem ürünü veya stoğu değiştirirse kayıt reddedilir; uyarıdan sonra güncel ürünü yükleyin. Stok sayısını değiştirmek fiziksel stok düzeltmesi anlamına gelir ve bir neden girilmesini gerektirir. Sipariş stok düşümü, red iadesi ve manuel düzeltmeler önceki/yeni bakiye ile işlem geçmişinde tutulur. Ürünler fiziksel olarak silinmez; arşivlenen ürün katalogdan ve yeni siparişlerden çıkar, mevcut sepette kaldırılması gereken ürün olarak görünür. Kategori birleştirme ürünleri hedef kategoriye taşır ve eski sipariş snapshot'larını değiştirmez.
+
+Toplu ürün aktarımı için yönetim ekranında CSV dosyasını seçip ürün bazında eski/yeni değerleri önizleyin; hatalı satırlar düzeltilmeden hiçbir değişiklik uygulanmaz. Dosya düzeni, sınırlar ve tekrar deneme kuralları [CSV ürün şablonunda](PRODUCT-CSV.md) açıklanır.
 
 Sipariş akışı **Bekliyor → Onaylandı → Hazırlanıyor → Sevk edildi → Teslim edildi** şeklindedir. **Bekliyor**, **Onaylandı** ve **Hazırlanıyor** aşamalarında gerekçeli ret veya iptal mümkündür; stok tek kez iade edilir. **Sevk edildi** durumundan sonra doğrudan ret/iptal ve stok iadesi yapılamaz; ayrı iade süreci bu uygulamada yoktur. Ret/iptal ve teslim durumları son durumdur. Yönetici notu bayiye gösterilmez. “Onaylandı”, sevk veya fatura kesildiği anlamına gelmez.
 

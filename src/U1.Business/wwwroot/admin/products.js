@@ -31,6 +31,8 @@ export async function products() {
       "Ürün yönetimi",
       "Ürün bilgilerini, fiyatları ve stokları güncelleyin.",
       /* HTML */ `<a class="button" href="#admin-categories">Kategori yönetimi</a>
+        <a class="button" href="/api/admin/products/export">CSV dışa aktar</a>
+        <button class="button" type="button" data-action="csv-import-open">CSV içe aktar</button>
         <button class="button" type="button" data-action="preview-image-cleanup">
           ${icon("trash")} Görsel temizliği
         </button>

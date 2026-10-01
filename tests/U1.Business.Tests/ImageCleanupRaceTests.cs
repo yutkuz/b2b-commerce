@@ -17,6 +17,72 @@ namespace U1.Business.Tests;
 public sealed class ImageCleanupRaceTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
+    public async Task Csv_import_cannot_attach_an_image_staged_for_cleanup()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var webRoot = NewWebRoot();
+        await using var barrier = new SqlConnection(ApiFactory.ConnectionString);
+        SqlTransaction? barrierTransaction = null;
+        try
+        {
+            using var imageFactory = NewFactory(webRoot);
+            using var admin = NewAdmin(imageFactory);
+            var csrf = await ApiTest.LoginAdmin(admin);
+            var (url, path) = await CreateOldImage(webRoot, token);
+            var code = "CI-CSV-IMAGE-" + Guid.NewGuid().ToString("N")[..8];
+            var csv = "code,name,description,brand,manufacturerCode,specialCode1,specialCode2,imageUrl,stock,criticalStock,price,category,rowVersion,stockReason\n"
+                + $"{code},CSV image,CI,CI,CI,,,{url},0,1,1.00,Diagnostik cihazlar,,";
+            using var previewResponse = await ApiTest.SendJson(admin, HttpMethod.Post,
+                "/api/admin/products/import/preview", new { csv }, csrf);
+            Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+            var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>(token);
+            Assert.True(ApiTest.Property(preview, "valid").GetBoolean());
+            var previewToken = ApiTest.Property(preview, "previewToken").GetString();
+
+            await barrier.OpenAsync(token);
+            barrierTransaction = (SqlTransaction)await barrier.BeginTransactionAsync(token);
+            await using (var command = new SqlCommand(
+                "SELECT TOP (1) Id FROM dbo.AdminEvents WITH (TABLOCKX,HOLDLOCK)",
+                barrier,
+                barrierTransaction))
+            {
+                await command.ExecuteScalarAsync(token);
+            }
+
+            var cleanupTask = ApiTest.SendJson(admin, HttpMethod.Post,
+                "/api/admin/images/cleanup", new { urls = new[] { url } }, csrf);
+            await WaitUntil(() => !File.Exists(path)
+                && Directory.Exists(Path.Combine(webRoot, "uploads", ".pending-cleanup"))
+                && Directory.EnumerateFiles(
+                    Path.Combine(webRoot, "uploads", ".pending-cleanup"),
+                    "*", SearchOption.AllDirectories).Any(), token);
+            var importTask = ApiTest.SendJson(admin, HttpMethod.Post,
+                "/api/admin/products/import/apply",
+                new { csv, importId = Guid.NewGuid(), previewToken }, csrf);
+            await barrierTransaction.CommitAsync(token);
+            await barrierTransaction.DisposeAsync();
+            barrierTransaction = null;
+
+            using var cleanup = await cleanupTask;
+            using var import = await importTask;
+            Assert.Equal(HttpStatusCode.OK, cleanup.StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, import.StatusCode);
+            Assert.Equal("IMPORT_PREVIEW_STALE", ApiTest.Property(
+                await import.Content.ReadFromJsonAsync<JsonElement>(token), "code").GetString());
+            Assert.False(File.Exists(path));
+            using var scope = imageFactory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<BusinessDbContext>();
+            Assert.False(await db.Products.AnyAsync(x => x.Code == code, token));
+        }
+        finally
+        {
+            if (barrierTransaction is not null)
+                await barrierTransaction.RollbackAsync(CancellationToken.None);
+            Directory.Delete(webRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Cleanup_cannot_delete_an_image_attached_by_an_in_flight_product_write()
     {
         var token = TestContext.Current.CancellationToken;

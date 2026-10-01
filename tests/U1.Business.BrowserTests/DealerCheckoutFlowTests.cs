@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 using Microsoft.Playwright.Xunit.v3;
@@ -14,6 +15,50 @@ namespace U1.Business.BrowserTests;
 
 public sealed class DealerCheckoutFlowTests : PageTest
 {
+    [Fact]
+    public async Task Admin_can_preview_apply_and_export_product_csv_in_browser()
+    {
+        await using var application =
+            await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-products");
+
+            var code = "CSV-BR-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+            var csv = "code,name,description,brand,manufacturerCode,specialCode1,specialCode2,imageUrl,stock,criticalStock,price,category,rowVersion,stockReason\n"
+                + $"{code},Tarayıcı CSV ürünü,Açıklama,CI,CI-M,,,/images/product.svg,3,1,12.50,Diagnostik cihazlar,,İlk stok";
+            await Page.GetByRole(AriaRole.Button, new() { Name = "CSV içe aktar" }).ClickAsync();
+            var dialog = Page.GetByRole(AriaRole.Dialog);
+            await dialog.Locator("input[type=file]").SetInputFilesAsync(new FilePayload
+            {
+                Name = "products.csv",
+                MimeType = "text/csv",
+                Buffer = Encoding.UTF8.GetBytes(csv)
+            });
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Değişiklikleri önizle" })
+                .ClickAsync();
+
+            dialog = Page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog).ToContainTextAsync(code);
+            await Expect(dialog).ToContainTextAsync("Tarayıcı CSV ürünü");
+            await Expect(dialog).ToContainTextAsync("12.5");
+            await dialog.GetByRole(AriaRole.Button,
+                new() { Name = "Önizlenen değişiklikleri uygula" }).ClickAsync();
+            await Expect(Page.GetByRole(AriaRole.Dialog)).Not.ToBeVisibleAsync();
+
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-products?q={code}");
+            await Expect(Page.Locator("tbody tr").Filter(new() { HasText = code }))
+                .ToContainTextAsync("Tarayıcı CSV ürünü");
+
+            var downloadTask = Page.WaitForDownloadAsync();
+            await Page.GetByRole(AriaRole.Link, new() { Name = "CSV dışa aktar" }).ClickAsync();
+            var download = await downloadTask;
+            Assert.Equal("u1-products.csv", download.SuggestedFilename);
+        });
+    }
+
     [Fact]
     public async Task Order_print_readd_preview_and_private_admin_note_work_in_browser()
     {
