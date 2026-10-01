@@ -6,7 +6,7 @@ Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL 
 
 ## Arayüzden görüntüler
 
-Aşağıdaki ekranlar çalışan uygulamadan, yalnız örnek bayi ve ürün verileriyle alınmıştır (28 Eylül 2026).
+Aşağıdaki **14 ekran görüntüsü, 1 Ekim 2026** tarihinde çalışan uygulamadan ayrı bir demo veritabanıyla alındı. Bayiler, fiyat grupları ve siparişler örnektir. Masaüstü görüntüleri 1600 piksel, mobil sepet 390 piksel genişliğindedir. Görselleri açarak tam boyutta inceleyebilirsiniz.
 
 ### Bayi kataloğu
 
@@ -15,17 +15,77 @@ Kategori ve stok filtreleri, ürün arama, fiyatlar ve satırdan sepete ekleme.
 ![Bayi ana sayfasında ürün kataloğu, filtreler ve stok bilgileri](assets/screenshots/bayi-katalog.png)
 
 <details>
-<summary>Sepet ve yönetim panelini göster</summary>
+<summary>Bayi deneyimi: sepet, sipariş takibi, profil ve mobil görünüm</summary>
 
 ### Sepet ve sipariş özeti
 
 ![Bayi sepetinde ürün, adet, sipariş notu ve toplam tutar](assets/screenshots/bayi-sepet.png)
 
-### Yönetim paneli
+### Siparişler ve durum geçmişi
+
+Bekleyen, hazırlanan ve sevk edilen örnek siparişler; detayda kayıt anındaki fiyatlar, durum geçmişi, yazdırma ve yeniden sepete ekleme.
+
+![Bayi sipariş listesi ve farklı sipariş durumları](assets/screenshots/bayi-siparisler.png)
+![Sipariş kalemleri, durum geçmişi ve yazdırma seçenekleri](assets/screenshots/siparis-detayi.png)
+
+### Profil düzenleme
+
+![Bayinin firma ve iletişim bilgilerini düzenlediği hesap ekranı](assets/screenshots/bayi-profil.png)
+
+### Mobil sepet
+
+Dar ekranda ürün tablosu yatay kaydırılabilir; sipariş özeti ve onay düğmesi tablonun altındadır.
+
+<img src="assets/screenshots/mobil-sepet.png" alt="Mobil bayi sepeti" width="390" />
+
+</details>
+
+<details>
+<summary>Yönetim: genel bakış, ürünler, kategoriler ve bayi fiyat grupları</summary>
+
+### Genel bakış
 
 ![Yönetim panelinde ürün ve bayi sayıları ile kritik stok listesi](assets/screenshots/yonetim-paneli.png)
 
+### Ürünler ve kategoriler
+
+![Ürün listesi, stok seviyeleri, arşiv filtresi ve CSV araçları](assets/screenshots/urun-yonetimi.png)
+![Kategori adları, ürün sayıları ve kategori birleştirme formları](assets/screenshots/kategori-yonetimi.png)
+
+### Bayi grupları ve iskonto
+
+Her bayiye bir grup atanır; grubun tek yüzde iskontosu katalog, sepet ve sipariş fiyatlarına sunucuda uygulanır.
+
+![Bayi hesapları, grup ataması ve örnek iskonto grupları](assets/screenshots/bayi-fiyat-gruplari.png)
+
 </details>
+
+<details>
+<summary>Operasyon: sipariş yönetimi, işlem geçmişi, CSV ve görsel temizliği</summary>
+
+![Yönetici sipariş listesi ve durum geçişleri](assets/screenshots/siparis-yonetimi.png)
+![Yönetici olayları ve stok hareketlerinin filtrelenebilir geçmişi](assets/screenshots/islem-gecmisi.png)
+
+### CSV değişiklik önizlemesi
+
+Dosya uygulanmadan önce ürünlerin eski/yeni değerleri ve satır hataları gösterilir. Biçim ve sınırlar: [CSV ürün şablonu](PRODUCT-CSV.md).
+
+![Yeni ürünün CSV alanları ve uygulama onayı](assets/screenshots/csv-onizleme.png)
+
+### Görsel temizliği
+
+Önizleme kullanılmayan dosyaları listeler; yeni yüklemelerde bekleme süresi uygulanır. Bu örnekte temizlenecek dosya yoktur.
+
+![Kullanılmayan ürün görsellerinin temizleme önizlemesi](assets/screenshots/gorsel-temizligi.png)
+
+</details>
+
+## Özellikler
+
+- **Bayi:** ürün arama ve filtreleme, gruba göre fiyat, sepet, sipariş öncesi tutar onayı, durum geçmişi, yazdırılabilir sipariş formu, güncel fiyatlarla yeniden sepete ekleme ve profil düzenleme.
+- **Yönetici:** ürün ve kategori yönetimi, arşivleme/geri açma, bayi hesapları ve iskonto grupları, stok düzeltmeleri, sipariş durumları ve özel notlar, duyurular ve katalog kolonları.
+- **Toplu işlemler:** 1 MiB / 1000 satır sınırında CSV önizleme, doğrulama, atomik uygulama ve dışa aktarma; görsel kotası ve kontrollü dosya temizliği.
+- **Tutarlılık:** ürün ve fiyat bilgilerinin sipariş anında saklanması, tekrar isteklerde mükerrer işlem koruması, eski form çakışmaları ve işlem geçmişi.
 
 ## Kullanılan teknolojiler ve kısa mimari özeti
 
@@ -122,7 +182,8 @@ Yönetici hesabıyla girişten sonra sağ üstte **üç nokta → Yönetim panel
 | Ürün yönetimi | Ürün ekleme/düzenleme; fiyat, stok ve kritik seviye belirleme; stok değişikliğinde neden girme; ürünü neden kaydıyla arşivleme/geri açma |
 | Kategori yönetimi | Kategori ekleme/yeniden adlandırma; bir kategorinin ürünlerini hedef kategoriye taşıyarak birleştirme |
 | CSV ürün aktarımı | Ürünleri dışa aktarma, dosya seçme, satır bazlı eski/yeni değer önizlemesi ve açık onayla toplu uygulama |
-| Kullanıcılar | Hesap arama, bilgilerini düzenleme, pasifleştirme ve yeni parola atama; son aktif yönetici ve kendi hesabını kapatma koruması |
+| Kullanıcılar | Hesap arama, düzenleme, pasifleştirme, yeni parola atama; son aktif yönetici koruması; bayi grubu atama ve grup iskontolarını düzenleme |
+| Görsel temizliği | Kullanılmayan görselleri önizleme, bekleme süresi ve açık seçimle temizleme; toplam kota ve boş disk alanı koruması |
 | Sipariş yönetimi | Siparişleri arama/filtreleme, durum geçmişi, onay/hazırlama/sevk/teslim, gerekçeli ret/iptal ve yalnız yöneticiye açık not |
 | Katalog düzeni | Kolon başlığı, sırası, genişliği, hizalaması, gösterimi ve cihaz görünürlüğü |
 | Duyurular | Ana sayfa metni, arama eylemi, sıra ve yayın durumu |
@@ -162,9 +223,9 @@ Eski kurulumda yarım kalmış demo kayıtları saptanırsa uygulama açıklayı
 
 Tek ASP.NET Core uygulaması hem sayfaları hem `/api` yollarını sunar. `Program.cs` sunucu, cookie oturumu, rol denetimi, CSRF koruması ve hata yanıtlarını kurar. `Endpoints/` kimlik, katalog, sepet/sipariş ve yönetim API'lerini içerir. `BusinessDbContext` EF Core modelini ve SQL şemasıyla eşleşen temel index/ilişki metadata'sını tanımlar. `Services/OrderService.cs` kritik sipariş işlemini transaction içinde yürütür. `Data/Database.cs` veritabanı oluşturma, SQL-first şema yükseltme ve demo kurulumunu yönetir. SQL Server'a özgü `UPDLOCK`, `HOLDLOCK` ve `sp_getapplock` gereken kritik yerlerde EF Core üzerinden ham SQL/ADO.NET kullanılır. `wwwroot/` tarayıcı arayüzüdür.
 
-Users, Categories, Products, Carts, CartItems, Orders, OrderItems, OrderStatusHistory, GridColumns, Banners, StockMovements, AdminEvents, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
+Users, DealerGroups, Categories, Products, Carts, CartItems, Orders, OrderItems, OrderStatusHistory, GridColumns, Banners, StockMovements, AdminEvents, SchemaVersions ve DemoSetup tabloları bulunur. Para değerleri SQL'de `decimal(18,2)` saklanır. Katalog filtreleri ve 20 kayıtlık sayfalama SQL tarafındadır. Katalog kolonları veritabanından okunur. Sipariş anındaki ürün adı/kodu/fiyatı sipariş kaleminde korunur.
 
-Sipariş, stok düşümü, stok hareketi ve sepet temizliği tek transaction içindedir; biri başarısızsa tümü geri alınır. Red iadesi ile yönetici olayı da sipariş durumuyla aynı transaction'dadır. Aynı sipariş isteğinin tekrarı ikinci sipariş veya stok hareketi oluşturmaz. Eski yönetici ürün formu güncel stoğu ezemez. Bayi yalnız kendi siparişlerini görür; yönetim API'leri ve salt okunur işlem geçmişi Admin rolü ister. Parola/hash, cookie ve token değerleri işlem geçmişine yazılmaz. Parolalar hash'lenir. Cookie HttpOnly/SameSite, değiştirici işlemlerde CSRF, giriş/kayıtta hız sınırı ve SQL sorgularında parametreleme kullanılır.
+Sipariş, stok düşümü, stok hareketi ve sepet temizliği tek transaction içindedir; biri başarısızsa tümü geri alınır. Red iadesi ile yönetici olayı da sipariş durumuyla aynı transaction'dadır. Aynı sipariş isteğinin tekrarı ikinci sipariş veya stok hareketi oluşturmaz. Eski yönetici ürün formu güncel stoğu ezemez. Bayi yalnız kendi siparişlerini görür; yönetim API'leri ve salt okunur işlem geçmişi Admin rolü ister. Parola/hash, cookie ve token değerleri işlem geçmişine yazılmaz. Parolalar hash'lenir. Cookie HttpOnly/SameSite, değiştirici işlemlerde CSRF, giriş/kayıt, katalog arama, sepet/sipariş yazmaları ve görsel yüklemede hız sınırı ve SQL sorgularında parametreleme kullanılır.
 
 ## Gerçek yayına geçiş sınırı
 
@@ -186,6 +247,8 @@ Uygulama varsayılan olarak yerel geliştirme ortamına göre yapılandırılmı
 | Yarım demo kurulumu uyarısı | Yedek alın; gerçek kayıtları koruyarak yukarıdaki kurtarma notunu izleyin. |
 
 ## Doğrulama
+
+1 Ekim 2026 tarihli `f01fbba` sürümünün [GitHub Actions çalışmasında](https://github.com/yutkuz/b2b-commerce/actions/runs/36858240008) **53 API testi ve 14 Chromium testi** başarılıdır. Bu sayı sürüme aittir; güncel sonuç için Actions çalışmasını kontrol edin.
 
 Çözümü yeni bir bilgisayarda veya temiz klonda doğrulamak için:
 
