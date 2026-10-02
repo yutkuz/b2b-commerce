@@ -1,4 +1,5 @@
-import { adminAction, adminSubmit } from './admin.js?v=20261001d';
+import { pendingImageCleanup, confirmPendingFinalization, recoverPendingImages } from "./admin/products.js?v=20261001e";
+import { adminAction, adminSubmit } from './admin.js?v=20261001e';
 import {
     api,
     closeModal,
@@ -24,7 +25,7 @@ import {
     resetCheckoutApproval,
     saveDraftNote,
     submitCheckout,
-} from './checkout.js?v=20260929b';
+} from './checkout.js?v=20261001e';
 import { showOrder, showReaddPreview } from './orders.js?v=20260930a';
 
 let renderPage;
@@ -76,6 +77,20 @@ async function handleActionClick(event) {
 
     try {
         switch (action) {
+            case 'pending-image-cleanup':
+                rememberModalTrigger(element);
+                await pendingImageCleanup();
+                return;
+            case 'restore-pending-images':
+                await recoverPendingImages(element, 'restore');
+                return;
+            case 'finalize-pending-images':
+                confirmPendingFinalization(element);
+                return;
+            case 'confirm-finalize-pending-images':
+                await recoverPendingImages(element, 'finalize');
+                return;
+
             case 'skip':
                 event.preventDefault();
                 document.querySelector('#main')?.focus();

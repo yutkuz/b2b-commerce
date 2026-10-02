@@ -1,5 +1,5 @@
 import { go, state } from "./app-core.js?v=20260928a";
-import { dashboard } from "./admin/dashboard.js?v=20260928b";
+import { dashboard } from "./admin/dashboard.js?v=20261001e";
 import {
   products,
   productForm,
@@ -8,7 +8,7 @@ import {
   restoreProduct,
   previewImageCleanup,
   cleanupImages,
-} from "./admin/products.js?v=20261001d";
+} from "./admin/products.js?v=20261001e";
 import {
   openCsvImport,
   previewCsvImport,
@@ -20,14 +20,14 @@ import {
   submitCategoryUpdate,
   submitCategoryMerge,
 } from "./admin/categories.js?v=20260929b";
-import { history } from "./admin/history.js?v=20260929b";
+import { history } from "./admin/history.js?v=20261001e";
 import {
   userList,
   showUserEditor,
   submitUser,
   submitDealerGroupCreate,
   submitDealerGroupUpdate,
-} from "./admin/users.js?v=20261001b";
+} from "./admin/users.js?v=20261001e";
 import { orderList } from "./admin/orders.js?v=20260930a";
 import { grid, submitGrid } from "./admin/grid.js?v=20260928b";
 import {

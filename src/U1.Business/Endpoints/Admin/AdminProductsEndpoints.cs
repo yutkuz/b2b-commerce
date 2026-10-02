@@ -10,6 +10,7 @@ public static partial class AdminEndpoints
 {
     private static void MapProducts(RouteGroupBuilder api)
     {
+        MapImageRecovery(api);
         api.MapGet(
             "/products",
             async (string? q, bool? archived, int? page, BusinessDbContext db) =>

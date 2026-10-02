@@ -17,6 +17,32 @@ import { adminSearch, selectField } from "./ui.js?v=20260928b";
 let users = [];
 let dealerGroups = [];
 
+function showConflict(form, message, reload) {
+  let notice = form.querySelector(".form-conflict");
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.className = "notice form-conflict";
+    notice.setAttribute("role", "alert");
+    form.append(notice);
+  }
+  notice.replaceChildren(document.createTextNode(message + " Girdiğiniz alanlar korunuyor. "));
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "button small";
+  button.textContent = "Güncel bilgileri yükle";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await reload();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  notice.append(button);
+}
+
 export async function userList() {
   const page = +(state.params.get("page") || 1);
   const [d, groupData] = await Promise.all([
@@ -174,11 +200,12 @@ export async function submitUser(form, data, render) {
     });
   } catch (error) {
     if (error.code === "USER_CHANGED") {
-      toast(
-        "Kullanıcı başka bir işlemde değişti. Güncel bilgileri yeniden açın.",
-      );
-      closeModal();
-      await render();
+      showConflict(form, "Kullanıcı başka bir işlemde değişti.", async () => {
+        const id = form.dataset.id;
+        closeModal();
+        await render();
+        showUserEditor({ dataset: { id } });
+      });
       return;
     }
     throw error;
@@ -210,8 +237,7 @@ export async function submitDealerGroupUpdate(form, data, render) {
     });
   } catch (error) {
     if (error.code === "DEALER_GROUP_CHANGED") {
-      toast("Bayi grubu başka bir işlemde değişti. Güncel değerler yüklendi.", true);
-      await render();
+      showConflict(form, "Bayi grubu başka bir işlemde değişti.", render);
       return;
     }
     throw error;

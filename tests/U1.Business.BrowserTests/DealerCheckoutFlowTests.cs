@@ -554,6 +554,147 @@ public sealed class DealerCheckoutFlowTests : PageTest
     }
 
     [Fact]
+    public async Task Dealer_groups_create_update_assign_and_preserve_stale_drafts()
+    {
+        await using var application = await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+        await RunWithDiagnostics(application, async () =>
+        {
+            await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-users");
+            var name = "Tarayıcı grup " + Guid.NewGuid().ToString("N")[..6];
+            var create = Page.Locator("[data-form='dealer-group-create']");
+            await create.Locator("[name='name']").FillAsync(name);
+            await create.Locator("[name='discountPercent']").FillAsync("7.5");
+            await create.GetByRole(AriaRole.Button, new() { Name = "Grup ekle" }).ClickAsync();
+            var group = Page.Locator("[data-form='dealer-group-update']").Filter(new()
+            {
+                Has = Page.Locator($"input[value='{name}']")
+            });
+            await Expect(group).ToHaveCountAsync(1);
+            var id = await group.GetAttributeAsync("data-id");
+            group = Page.Locator($"[data-form='dealer-group-update'][data-id='{id}']");
+            await group.Locator("[name='discountPercent']").FillAsync("12.5");
+            await group.GetByRole(AriaRole.Button, new() { Name = "Kaydet", Exact = true }).ClickAsync();
+            await Expect(group.Locator("[name='discountPercent']")).ToHaveValueAsync("12.5");
+
+            using var api = await LoginApiAsync(application, "admin@u1.local", "U1Admin!2026");
+            var groups = await api.Client.GetFromJsonAsync<JsonElement>("/api/admin/dealer-groups", TestContext.Current.CancellationToken);
+            var current = groups.GetProperty("items").EnumerateArray().Single(x => x.GetProperty("id").GetInt32().ToString() == id);
+            using (var response = await SendJsonAsync(api, HttpMethod.Put, $"/api/admin/dealer-groups/{id}", new
+            {
+                name = name + " güncel", discountPercent = 15,
+                rowVersion = current.GetProperty("rowVersion").GetString()
+            })) response.EnsureSuccessStatusCode();
+            await group.Locator("[name='name']").FillAsync(name + " taslak");
+            await group.Locator("[name='discountPercent']").FillAsync("20");
+            await group.GetByRole(AriaRole.Button, new() { Name = "Kaydet", Exact = true }).ClickAsync();
+            await Expect(group.GetByRole(AriaRole.Alert)).ToContainTextAsync("Girdiğiniz alanlar korunuyor");
+            await Expect(group.Locator("[name='name']")).ToHaveValueAsync(name + " taslak");
+            await Expect(group.Locator("[name='discountPercent']")).ToHaveValueAsync("20");
+            await group.GetByRole(AriaRole.Button, new() { Name = "Güncel bilgileri yükle" }).ClickAsync();
+            await Expect(group.Locator("[name='name']")).ToHaveValueAsync(name + " güncel");
+            await Expect(group.Locator("[name='discountPercent']")).ToHaveValueAsync("15");
+
+            var userRow = Page.Locator("tbody tr").Filter(new() { HasText = "bayi@u1.local" });
+            await userRow.GetByRole(AriaRole.Button, new() { Name = "Düzenle" }).ClickAsync();
+            var dialog = Page.GetByRole(AriaRole.Dialog);
+            await dialog.GetByLabel("Bayi grubu", new() { Exact = true }).SelectOptionAsync(id!);
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Bilgileri kaydet" }).ClickAsync();
+            await Expect(userRow).ToContainTextAsync(name + " güncel");
+            await userRow.GetByRole(AriaRole.Button, new() { Name = "Düzenle" }).ClickAsync();
+            var users = await api.Client.GetFromJsonAsync<JsonElement>("/api/admin/users", TestContext.Current.CancellationToken);
+            var user = users.GetProperty("items").EnumerateArray().Single(x => x.GetProperty("email").GetString() == "bayi@u1.local");
+            using (var response = await SendJsonAsync(api, HttpMethod.Put, $"/api/admin/users/{user.GetProperty("id").GetInt32()}", new
+            {
+                firstName = "Güncel bayi", lastName = user.GetProperty("lastName").GetString(),
+                email = user.GetProperty("email").GetString(), phone = user.GetProperty("phone").GetString(),
+                company = user.GetProperty("company").GetString(), isActive = true,
+                dealerGroupId = int.Parse(id!), version = user.GetProperty("version").GetInt32()
+            })) response.EnsureSuccessStatusCode();
+            await dialog.GetByLabel("Ad", new() { Exact = true }).FillAsync("Taslak bayi");
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Bilgileri kaydet" }).ClickAsync();
+            await Expect(dialog.GetByRole(AriaRole.Alert)).ToContainTextAsync("Girdiğiniz alanlar korunuyor");
+            await Expect(dialog.GetByLabel("Ad", new() { Exact = true })).ToHaveValueAsync("Taslak bayi");
+            await dialog.GetByRole(AriaRole.Button, new() { Name = "Güncel bilgileri yükle" }).ClickAsync();
+            await Expect(dialog.GetByLabel("Ad", new() { Exact = true })).ToHaveValueAsync("Güncel bayi");
+            await Page.Keyboard.PressAsync("Escape");
+
+            await Page.GotoAsync($"{application.BaseUrl}/#admin-history");
+            foreach (var action in new[] { ("DealerGroupCreated", "Bayi grubu oluşturma"), ("DealerGroupUpdated", "Bayi grubu güncelleme"), ("DealerGroupAssigned", "Bayi grubu atama") })
+            {
+                await Page.GetByLabel("İşlem", new() { Exact = true }).SelectOptionAsync(action.Item1);
+                await Page.GetByRole(AriaRole.Button, new() { Name = "Filtrele" }).ClickAsync();
+                await Expect(Page.Locator("tbody .status-badge").First).ToHaveTextAsync(action.Item2);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Pending_image_cleanup_without_audit_can_be_restored_in_browser()
+    {
+        await using var application = await BrowserTestApplication.StartAsync(TestContext.Current.CancellationToken);
+        var operation = Guid.NewGuid().ToString("N");
+        var uploads = Path.Combine(application.WebRootPath, "uploads");
+        var pendingFolder = Path.Combine(uploads, ".pending-cleanup", operation);
+        var fileName = "browser-recovery-" + operation + ".png";
+        var pendingPath = Path.Combine(pendingFolder, fileName);
+        var restoredPath = Path.Combine(uploads, fileName);
+        var contents = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXioAAAAASUVORK5CYII=");
+        try
+        {
+            Directory.CreateDirectory(pendingFolder);
+            await File.WriteAllBytesAsync(pendingPath, contents, TestContext.Current.CancellationToken);
+            await RunWithDiagnostics(application, async () =>
+            {
+                await LoginAsync(application, "admin@u1.local", "U1Admin!2026");
+                await Page.GotoAsync($"{application.BaseUrl}/#admin-products");
+                // Simulate a partial cleanup response to verify its recovery entry point.
+                await Page.RouteAsync("**/api/admin/images/cleanup-preview", route => route.FulfillAsync(new()
+                {
+                    ContentType = "application/json",
+                    Body = JsonSerializer.Serialize(new { items = new[] { new { url = "/uploads/" + fileName, sizeBytes = contents.Length, canDelete = true } } })
+                }));
+                await Page.RouteAsync("**/api/admin/images/cleanup", route => route.FulfillAsync(new()
+                {
+                    ContentType = "application/json", Body = "{\"deleted\":0,\"pending\":1}"
+                }));
+                await Page.Locator("[data-action='preview-image-cleanup']").ClickAsync();
+                await Page.Locator("[data-cleanup-image]").CheckAsync();
+                await Page.Locator("[data-action='cleanup-images']").ClickAsync();
+                await Expect(Page.GetByRole(AriaRole.Alert)).ToContainTextAsync("1 dosyanın temizliği bekliyor");
+                await Page.GetByRole(AriaRole.Button, new() { Name = "Bekleyen işlemleri incele" }).ClickAsync();
+                var dialog = Page.GetByRole(AriaRole.Dialog);
+                var item = dialog.Locator("section").Filter(new() { HasText = operation });
+                await Expect(item).ToContainTextAsync("Temizlik geçmiş kaydı yok");
+                await Expect(item.Locator("[data-action='finalize-pending-images']")).ToBeDisabledAsync();
+                await Page.RouteAsync("**/api/admin/images/cleanup-pending/*/restore", async route =>
+                {
+                    var response = await route.FetchAsync();
+                    Assert.Equal(200, response.Status);
+                    var result = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await response.TextAsync())!;
+                    result["auditWarning"] = JsonSerializer.SerializeToElement("Dosya işlemi uygulandı; sonuç geçmiş kaydı doğrulanamadı. İşlem kimliğiyle kontrol edin.");
+                    await route.FulfillAsync(new() { Response = response, Body = JsonSerializer.Serialize(result) });
+                });
+                var restore = item.Locator("[data-action='restore-pending-images']");
+                await restore.FocusAsync();
+                await Page.Keyboard.PressAsync("Enter");
+                await Expect(dialog.Locator("section").Filter(new() { HasText = operation })).ToHaveCountAsync(0);
+                await Expect(dialog.GetByRole(AriaRole.Alert)).ToContainTextAsync("sonuç geçmiş kaydı doğrulanamadı");
+                await Expect(dialog.GetByRole(AriaRole.Alert)).ToContainTextAsync(operation);
+                Assert.False(File.Exists(pendingPath));
+                Assert.Equal(contents, await File.ReadAllBytesAsync(restoredPath, TestContext.Current.CancellationToken));
+            });
+        }
+        finally
+        {
+            if (File.Exists(pendingPath)) File.Delete(pendingPath);
+            if (File.Exists(restoredPath)) File.Delete(restoredPath);
+            if (Directory.Exists(pendingFolder) && !Directory.EnumerateFileSystemEntries(pendingFolder).Any())
+                Directory.Delete(pendingFolder);
+        }
+    }
+
+    [Fact]
     public async Task Mobile_catalog_and_cart_keep_the_required_purchase_controls()
     {
         await Page.SetViewportSizeAsync(390, 844);
@@ -583,10 +724,25 @@ public sealed class DealerCheckoutFlowTests : PageTest
             await Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Sepetim" }))
                 .ToBeVisibleAsync();
             await Expect(Page.Locator("input[data-context='cart']")).ToBeVisibleAsync();
+            var remove = Page.Locator(".cart-table [data-action='remove']");
+            var total = Page.Locator(".cart-table td[data-label='Toplam']");
+            await Expect(remove).ToBeInViewportAsync();
+            await Expect(total).ToBeInViewportAsync();
+            Assert.True(await Page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= window.innerWidth"));
+            await remove.FocusAsync();
+            await Page.Keyboard.PressAsync("Enter");
+            await Expect(Page.GetByText("Sepetiniz henüz boş.", new() { Exact = true })).ToBeVisibleAsync();
+            await AddProductAsync(application, "DG-001");
+            await Page.GotoAsync($"{application.BaseUrl}/#cart");
             await Expect(Page.GetByRole(
                 AriaRole.Button,
                 new() { Name = "Siparişi gözden geçir" }))
                 .ToBeVisibleAsync();
+            await Page.GetByRole(AriaRole.Button, new() { Name = "Siparişi gözden geçir" }).ClickAsync();
+            var approval = Page.GetByRole(AriaRole.Dialog);
+            await Expect(approval).ToBeVisibleAsync();
+            await approval.GetByRole(AriaRole.Button, new() { Name = "Siparişi oluştur", Exact = true }).ClickAsync();
+            await Expect(Page).ToHaveURLAsync(new Regex("#orders$"));
         });
     }
 
@@ -895,6 +1051,7 @@ internal sealed class BrowserTestApplication : IAsyncDisposable
     }
 
     public string BaseUrl { get; }
+    public string WebRootPath => Path.Combine(FindRepositoryRoot(), "src", "U1.Business", "wwwroot");
 
     public static async Task<BrowserTestApplication> StartAsync(CancellationToken cancellationToken)
     {

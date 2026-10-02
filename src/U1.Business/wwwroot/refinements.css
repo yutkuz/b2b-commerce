@@ -69,3 +69,12 @@ body{background:#f5f6f7}
   #dialog .dialog-head, #dialog .dialog-body { padding: 12px 0 !important; }
   #dialog .order-printable { break-inside: avoid; }
 }
+@media (max-width: 640px) {
+  .cart-table, .cart-table tbody { display: block; width: 100%; }
+  .cart-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .cart-table tr { display: block; padding: 12px; border-bottom: 1px solid #d5dde7; }
+  .cart-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 0; padding: 8px 0; white-space: normal; }
+  .cart-table td[data-label]::before { content: attr(data-label); font-weight: 500; color: #607086; }
+  .cart-table .cart-product { min-width: 0; }
+  .cart-table .icon-button { width: 44px; min-height: 44px; }
+}

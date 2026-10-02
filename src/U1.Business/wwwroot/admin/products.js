@@ -36,6 +36,7 @@ export async function products() {
         <button class="button" type="button" data-action="preview-image-cleanup">
           ${icon("trash")} Görsel temizliği
         </button>
+        <button class="button" type="button" data-action="pending-image-cleanup">Bekleyen görsel işlemleri</button>
         <a class="button primary" href="#admin-product"
         >${icon("plus")} Yeni ürün</a
       >`,
@@ -332,5 +333,42 @@ export async function cleanupImages(_element, render) {
   });
   closeModal();
   await render();
+  if (result.pending) {
+    modal("Görsel temizliği bekliyor", `<div class="notice" role="alert">${result.deleted} kullanılmayan görsel temizlendi; ${result.pending} dosyanın temizliği bekliyor. Bekleyen işlemleri inceleyerek geri koyma veya sonlandırma adımını seçin.</div><div class="form-actions"><button class="button primary" type="button" data-action="pending-image-cleanup">Bekleyen işlemleri incele</button><button class="button" type="button" data-action="close">Kapat</button></div>`);
+    return;
+  }
   toast(`${result.deleted} kullanılmayan görsel temizlendi.`);
+}
+
+
+export async function pendingImageCleanup() {
+  const data = await api("/admin/images/cleanup-pending");
+  const rows = data.items.map((item) => `<section class="panel form-card">
+    <h3>İşlem ${esc(item.operationId)}</h3>
+    <p>${item.auditCommitted ? "Temizlik geçmiş kaydı doğrulandı." : "Temizlik geçmiş kaydı yok; geri koyma önerilir."}</p>
+    <ul>${item.images.map((image) => `<li><code>${esc(image.url)}</code> · ${image.referenced ? "Ürün tarafından kullanılıyor" : "Kullanılmıyor"}${image.originalExists ? " · Özgün ad kullanılıyor; dosyaları inceleyin" : ""}</li>`).join("")}</ul>
+    <div class="form-actions">
+      <button class="button" type="button" data-action="restore-pending-images" data-operation="${esc(item.operationId)}" ${item.canRestore ? "" : "disabled"}>Dosyaları geri koy</button>
+      <button class="button" type="button" data-action="finalize-pending-images" data-operation="${esc(item.operationId)}" ${item.canFinalize ? "" : "disabled"}>Sonlandırmayı incele</button>
+    </div>
+  </section>`).join("");
+  modal("Bekleyen görsel işlemleri", `<div class="notice">Kesilen işlemler yeniden denetlenir. Kullanılan dosyalar silinemez; geri koyma mevcut dosyanın üzerine yazmaz.</div>${rows || empty("Bekleyen işlem yok.", "Görsel temizliği tamamlanmış.")}<div class="form-actions"><button class="button" type="button" data-action="pending-image-cleanup">Yenile</button><button class="button" type="button" data-action="close">Kapat</button></div>`);
+}
+
+export function confirmPendingFinalization(element) {
+  modal("Görsel temizliğini sonlandır", `<div class="notice">Bu işlemin kalan dosyaları kalıcı olarak silinecek. Sunucu ürün referanslarını ve temizlik geçmiş kaydını yeniden doğrulayacak.</div><p>İşlem: <code>${esc(element.dataset.operation)}</code></p><div class="form-actions"><button class="button" type="button" data-action="pending-image-cleanup">Geri dön</button><button class="button primary" type="button" data-action="confirm-finalize-pending-images" data-operation="${esc(element.dataset.operation)}">Kalıcı olarak sonlandır</button></div>`);
+}
+
+export async function recoverPendingImages(element, action) {
+  const result = await api("/admin/images/cleanup-pending/" + encodeURIComponent(element.dataset.operation) + "/" + action, { method: "POST" });
+  await pendingImageCleanup();
+  if (result.auditWarning) {
+    const notice = document.createElement("div");
+    notice.className = "notice error";
+    notice.setAttribute("role", "alert");
+    notice.textContent = `${result.auditWarning} İşlem: ${result.operationId}`;
+    document.querySelector("#dialog .dialog-body").prepend(notice);
+    return;
+  }
+  toast(action === "restore" ? "Dosyalar geri koyuldu." : result.pending ? `${result.pending} dosya bekliyor; yeniden inceleyin.` : "Görsel temizliği sonlandırıldı.");
 }

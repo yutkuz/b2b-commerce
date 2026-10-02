@@ -254,10 +254,10 @@ export async function renderCartPage() {
                     </div>
                 </div>
             </td>
-            <td class="money">${money(product.price)}</td>
-            <td>${product.isArchived ? `${product.quantity} adet` : quantityControl(product, 'cart')}</td>
-            <td class="money">${money(product.total)}</td>
-            <td>
+            <td class="money" data-label="Birim fiyat">${money(product.price)}</td>
+            <td data-label="Adet">${product.isArchived ? `${product.quantity} adet` : quantityControl(product, 'cart')}</td>
+            <td class="money" data-label="Toplam">${money(product.total)}</td>
+            <td data-label="Sepetten çıkar">
                 <button
                     class="icon-button"
                     data-action="remove"
@@ -279,7 +279,7 @@ export async function renderCartPage() {
                 ? `<div class="notice error" role="alert">Sepetinizde artık satışta olmayan ürün var. Sipariş vermeden önce kırmızı uyarılı ürünü sepetten çıkarın.</div>`
                 : ''}
             <div class="table-scroll">
-                <table class="data-table">
+                <table class="data-table cart-table">
                     <thead>
                         <tr>
                             <th>Ürün</th>

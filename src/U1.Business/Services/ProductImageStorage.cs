@@ -17,7 +17,7 @@ internal sealed record ImageCleanupBatch(string OperationId, IReadOnlyList<Stage
     public IReadOnlyList<string> Urls => Images.Select(x => x.Url).ToArray();
 }
 
-public sealed class ProductImageStorage
+public sealed partial class ProductImageStorage
 {
     private static readonly string[] ManagedExtensions = [".png", ".jpg", ".jpeg", ".webp"];
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -243,9 +243,13 @@ public sealed class ProductImageStorage
         try
         {
             foreach (var image in batch.Images)
+            {
+                if (File.Exists(image.OriginalPath) || Directory.Exists(image.OriginalPath))
+                    throw new BusinessException("Özgün dosya adı kullanılıyor; üzerine yazmadan önce dosyaları inceleyin.", 409, "IMAGE_RESTORE_CONFLICT");
+            }
+            foreach (var image in batch.Images)
                 File.Move(image.StagedPath, image.OriginalPath);
-            if (batch.Images.Count > 0)
-                RemoveEmptyStagingFolder(Path.GetDirectoryName(batch.Images[0].StagedPath)!);
+            RemoveEmptyStagingFolder(Path.Combine(uploadRoot, ".pending-cleanup", batch.OperationId));
         }
         finally
         {
@@ -279,8 +283,7 @@ public sealed class ProductImageStorage
                     logger.LogWarning(ex, "Görsel temizliği beklemede: {OperationId}", batch.OperationId);
                 }
             }
-            if (batch.Images.Count > 0)
-                RemoveEmptyStagingFolder(Path.GetDirectoryName(batch.Images[0].StagedPath)!);
+            RemoveEmptyStagingFolder(Path.Combine(uploadRoot, ".pending-cleanup", batch.OperationId));
             return pending;
         }
         finally

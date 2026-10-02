@@ -1,4 +1,4 @@
-import { renderAdmin } from './admin.js?v=20261001d';
+import { renderAdmin } from './admin.js?v=20261001e';
 import {
     portalRoutes,
     publicRoutes,
@@ -23,8 +23,8 @@ import { renderCatalogPage } from './catalog.js?v=20260928a';
 import {
     clearCheckoutSession,
     renderCartPage,
-} from './checkout.js?v=20260929b';
-import { bindAppEvents } from './app-events.js?v=20261001d';
+} from './checkout.js?v=20261001e';
+import { bindAppEvents } from './app-events.js?v=20261001e';
 import { renderOrdersPage } from './orders.js?v=20260930a';
 
 const ROUTES = {
