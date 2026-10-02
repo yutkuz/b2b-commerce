@@ -13,7 +13,7 @@ public static partial class AdminEndpoints
             {
                 var lowStock = await db.Products
                     .AsNoTracking()
-                    .Where(x => x.Stock <= x.CriticalStock)
+                    .Where(x => !x.IsArchived && x.Stock <= x.CriticalStock)
                     .OrderBy(x => x.Stock)
                     .ThenBy(x => x.Id)
                     .Take(8)
@@ -40,11 +40,12 @@ public static partial class AdminEndpoints
 
                 return new
                 {
-                    products = await db.Products.CountAsync(),
+                    products = await db.Products.CountAsync(x => !x.IsArchived),
                     users = await db.Users.CountAsync(x => x.Role == "Dealer"),
                     pending = await db.Orders.CountAsync(x => x.Status == "Bekliyor"),
                     revenue = await db.Orders
-                        .Where(x => x.Status == "Onaylandı")
+                        .Where(x => x.Status == "Onaylandı" || x.Status == "Hazırlanıyor"
+                            || x.Status == "Sevk edildi" || x.Status == "Teslim edildi")
                         .Select(x => (decimal?)x.Total)
                         .SumAsync() ?? 0m,
                     lowStock,

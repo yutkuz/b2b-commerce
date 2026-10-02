@@ -21,13 +21,13 @@ export async function dashboard() {
     ) +
     /* HTML */ `<div class="stats">
         ${[
-          ["Ürünler", d.products, "Katalogdaki ürün sayısı", "grid"],
+          ["Satıştaki ürünler", d.products, "Arşiv dışındaki ürün sayısı", "grid"],
           ["Bayiler", d.users, "Kayıtlı bayi hesabı", "users"],
           ["Bekleyen sipariş", d.pending, "Onayınızı bekliyor", "box"],
           [
             "Onaylanan tutar",
             money(d.revenue),
-            "Onaylanan tüm siparişler",
+            "Onaylanan, hazırlanan, sevk ve teslim edilen siparişler",
             "chart",
           ],
         ]
@@ -50,7 +50,7 @@ export async function dashboard() {
       <section class="panel" style="margin-top:22px">
         <div class="section-title">
           <h2>Stok takibi</h2>
-          <span class="muted"><small>Kritik seviyedeki ürünler</small></span>
+          <span class="muted"><small>Satıştaki kritik stoklu ürünler</small></span>
         </div>
         ${
           d.lowStock.length

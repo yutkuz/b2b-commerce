@@ -38,6 +38,7 @@ public static partial class AdminEndpoints
                 Rules.Validate(input);
                 ValidateDiscount(input.DiscountPercent);
 
+                await using var tx = await db.Database.BeginTransactionAsync();
                 var group = new DealerGroup
                 {
                     Name = input.Name.Trim(),
@@ -57,6 +58,7 @@ public static partial class AdminEndpoints
                     c.UserId(), "DealerGroupCreated", "DealerGroup", group.Id,
                     $"{group.Name} bayi grubu %{group.DiscountPercent:0.00} iskonto ile oluşturuldu."));
                 await db.SaveChangesAsync();
+                await tx.CommitAsync();
                 return Results.Ok(new { id = group.Id });
             });
 
