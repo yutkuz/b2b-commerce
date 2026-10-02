@@ -6,7 +6,7 @@ Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL 
 
 ## Arayüzden görüntüler
 
-Aşağıdaki **14 ekran görüntüsü, 1 Ekim 2026** tarihinde çalışan uygulamadan ayrı bir demo veritabanıyla alındı. Bayiler, fiyat grupları ve siparişler örnektir. Masaüstü görüntüleri 1600 piksel, mobil sepet 390 piksel genişliğindedir. Görselleri açarak tam boyutta inceleyebilirsiniz.
+Aşağıdaki **15 ekran görüntüsü, 2 Ekim 2026** tarihinde çalışan uygulamadan ayrı bir demo veritabanıyla alındı. Bayiler, fiyat grupları ve siparişler örnektir. Masaüstü görüntüleri 1600 piksel, mobil sepet 390 piksel genişliğindedir. Görselleri açarak tam boyutta inceleyebilirsiniz.
 
 ### Bayi kataloğu
 
@@ -34,7 +34,7 @@ Bekleyen, hazırlanan ve sevk edilen örnek siparişler; detayda kayıt anındak
 
 ### Mobil sepet
 
-Dar ekranda ürün tablosu yatay kaydırılabilir; sipariş özeti ve onay düğmesi tablonun altındadır.
+Dar ekranda ürünler kart düzeninde gösterilir; birim fiyat, adet, toplam ve çıkarma düğmesi aynı kartta görünür. Sipariş özeti ve onay düğmesi kartların altındadır.
 
 <img src="assets/screenshots/mobil-sepet.png" alt="Mobil bayi sepeti" width="390" />
 
@@ -44,6 +44,8 @@ Dar ekranda ürün tablosu yatay kaydırılabilir; sipariş özeti ve onay düğ
 <summary>Yönetim: genel bakış, ürünler, kategoriler ve bayi fiyat grupları</summary>
 
 ### Genel bakış
+
+Onaylanan tutar; onaylanan, hazırlanan, sevk edilen ve teslim edilen siparişleri kapsar. Bekleyen, reddedilen ve iptal edilen siparişler dahil değildir. Satıştaki ürün sayısı ve kritik stok listesi arşiv ürünlerini dışarıda bırakır.
 
 ![Yönetim panelinde ürün ve bayi sayıları ile kritik stok listesi](assets/screenshots/yonetim-paneli.png)
 
@@ -77,6 +79,12 @@ Dosya uygulanmadan önce ürünlerin eski/yeni değerleri ve satır hataları g�
 Önizleme kullanılmayan dosyaları listeler; yeni yüklemelerde bekleme süresi uygulanır. Bu örnekte temizlenecek dosya yoktur.
 
 ![Kullanılmayan ürün görsellerinin temizleme önizlemesi](assets/screenshots/gorsel-temizligi.png)
+
+### Kesilen görsel işlemlerini kurtarma
+
+**Bekleyen görsel işlemleri** ekranı dosyaları, ürün referanslarını ve temizlik geçmiş kaydını gösterir. Geçmiş kaydı bulunmayan işlemlerde dosyaları geri koyun. Sonlandırma yalnız geçmiş kaydı doğrulanmış ve kullanılmayan dosyalarda açılır; kalıcı silmeden önce ayrıca onay istenir.
+
+![Kesilen örnek görsel işlemi ve kontrollü geri koyma seçeneği](assets/screenshots/gorsel-kurtarma.png)
 
 </details>
 
@@ -248,7 +256,7 @@ Uygulama varsayılan olarak yerel geliştirme ortamına göre yapılandırılmı
 
 ## Doğrulama
 
-1 Ekim 2026 tarihli `f01fbba` sürümünün [GitHub Actions çalışmasında](https://github.com/yutkuz/b2b-commerce/actions/runs/36858240008) **53 API testi ve 14 Chromium testi** başarılıdır. Bu sayı sürüme aittir; güncel sonuç için Actions çalışmasını kontrol edin.
+2 Ekim 2026 tarihli yerel Release doğrulamasında **64 API testi ve 16 Chromium testi** başarılıdır; derleme 0 uyarı ve 0 hatayla tamamlandı. Son görsel kurtarma arayüzü güncellemesi ayrıca bir Chromium senaryosuyla doğrulandı. `64c6f42` uygulama sürümünün [GitHub CI çalışmasında](https://github.com/yutkuz/b2b-commerce/actions/runs/37005754556) da **64 API ve 16 Chromium testi** başarılıdır.
 
 Çözümü yeni bir bilgisayarda veya temiz klonda doğrulamak için:
 
@@ -309,5 +317,7 @@ Tarayıcıda bayi girişi, ürün araması, detay penceresi, sepete ekleme, sipa
 Gerçek parolalar, yerel bağlantı ayarları, yüklenen görseller ve derleme çıktıları Git'e alınmaz.
 
 Yüklenen ürün görselleri toplam depolama kotası ve asgari boş disk alanı ile korunur; değerler `ImageStorage` ayarlarından değiştirilebilir. Yönetim ekranındaki **Görsel temizliği** önce yalnız kullanılmayan dosyaları önizler; yeni yüklenen ve henüz ürüne bağlanmamış dosyalar bekleme süresi dolmadan seçilemez. Ürün kaydı ile temizlik aynı veritabanı kilidi altında sıralanır: temizlikten sonra silinmiş bir yükleme yolunu yeni ürüne bağlamak reddedilir. Temizlik dosyaları önce `uploads/.pending-cleanup/<işlem kimliği>/` alanına taşır; işlem geçmişi kaydedilemezse özgün adlarına geri koyar. Kayıt başarılı olup son dosya silme adımı aksarsa yanıtta `pending` sayısı görünür ve işlem kimliği geçmişte kalır. Bu alandaki dosyalar web üzerinden sunulmaz, kota hesabına dahildir; yedekle karşılaştırıp ilgili işlem geçmişini kontrol etmeden elle kaldırmayın. Temizlikten önce veritabanı ile `wwwroot/uploads` klasörünü birlikte yedekleyin. Tamamlanmış silme uygulama içinden geri alınmaz; geri dönüşte aynı yedekten dosyayı özgün adına geri koyun ve ürün referansını doğrulayın. Kullanılan dosyalar, uploads dışına çıkan yollar ve bağlantı/reparse-point hedefleri temizlenmez.
+
+Temizlikte kalan dosya varsa arayüz bekleyen sayısını bildirir ve **Bekleyen işlemleri incele** düğmesini açar. Kesilen işlemler için **Bekleyen görsel işlemleri** ekranından dosyaları geri koyabilir veya uygun işlemi sonlandırabilirsiniz. Geri koyma aynı adlı mevcut dosyanın üzerine yazmaz; sonlandırma ürün referanslarını ve temizlik geçmiş kaydını yeniden denetler. Dosya işlemi uygulanmışken sonuç geçmiş kaydı yazılamazsa ekranda işlem kimliğiyle kalıcı uyarı gösterilir (`auditWarning`); bu kimlikle geçmiş kaydını ve dosyaları kontrol edin. Kurtarma isteği, dosya işlemi başlamadan önce ayrıca geçmişe kaydedilir.
 
 Temiz bir klonda `dotnet restore`, Release build ve iki .NET test projesi ile doğrulama yapılabilir; önceki `bin`/`obj` çıktıları gerekli değildir.
