@@ -261,7 +261,7 @@ Yukarıdan aşağı ilerlenir. R numaraları kalıcı görev kimliğidir; numara
 
 - [x] **D01 · README ekran görüntüleri.** 2 Ekim 2026: `assets/screenshots` altında 15 güncel demo ekran görüntüsü mevcut; mobil kart sepeti, yönetim özeti, Türkçe geçmiş ve görsel kurtarma dahil. Tümü görsel olarak incelendi; tarayıcı hata kaydı boş.
 - [x] **D02 · Plan yönetimi.** Önceden yerel olan ROADMAP.md ve AGENTS.md, 2 Ekim kullanıcı talimatıyla Git takibine alındı. README'de bu dosyalara referans yok.
-- [ ] **Kullanıcı isteği · Demo kapsamının görünür açıklanması.** Durum: doğrulama bekliyor | 2026-10-04 | README başlığına ve girişine yalnız demo/portföy uyarısı eklendi; gerçek yayına geçiş sınırı açıklaştırıldı. Test: `git diff --check` başarılı; `tests/verify-source.ps1` başarılı (78 C#/JS dosyası). Uygulama commit'i: henüz yok. Kalan adım: GitHub depo açıklamasını güncelle, değişiklikleri pushla ve CI sonucunu doğrula.
+- [x] **Kullanıcı isteği · Demo kapsamının görünür açıklanması.** Durum: tamamlandı | 2026-10-04 | README başlığına ve girişine yalnız demo/portföy uyarısı eklendi; gerçek yayına geçiş sınırı açıklaştırıldı ve GitHub depo açıklaması "Demo-only" olarak güncellendi. Test: `git diff --check` başarılı; `tests/verify-source.ps1` başarılı (78 C#/JS dosyası); [Build CI](https://github.com/yutkuz/b2b-commerce/actions/runs/37219055279) derleme, API ve Chromium testleri başarılı. Uygulama commit'i: `d7c885c` (yalnız dokümantasyon). Kalan sınırlama: gerçek üretim dağıtımı ve harici entegrasyonlar bu demo kapsamı dışındadır.
 
 ## Başlangıç ve tamamlanma kuralı
 
