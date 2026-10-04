@@ -1,8 +1,10 @@
-# U1 Business — B2B bayi sipariş uygulaması
+# U1 Business — B2B bayi sipariş demosu
 
 U1 Business, bayi ve yöneticilerin kullandığı küçük bir B2B e-ticaret uygulamasıdır. Bayi ürünleri arar, sepete ekler ve sipariş oluşturur. Yönetici ürünleri, bayi hesaplarını ve sipariş süreçlerini yönetir. Uygulama **ASP.NET Core 10**, **Entity Framework Core**, **SQL Server** ve HTML/CSS/JavaScript ile geliştirilmiştir. Ayrı frontend sunucusu veya Node.js kurulumu gerekmez.
 
-Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL Server LocalDB kullanır. Demo ürünler, fiyatlar, kullanıcılar ve firma metinleri gerçek ticari veri değildir. Uygulama ödeme veya cari hesap sistemi değildir.
+> **Yalnızca demo / portföy projesi.** Bu uygulama yerel ortamda özellikleri göstermek ve geliştirme yapmak içindir; gerçek müşteri, sipariş veya ödeme işlemlerinde kullanılmak ya da internete canlı hizmet olarak açılmak için hazırlanmış ve doğrulanmış değildir. Örnek hesapları, parolaları ve verileri gerçek kullanımda kullanmayın.
+
+Bu depo çalışır **kaynak kodu** içerir. Varsayılan kurulum Windows'ta SQL Server LocalDB kullanır. Ürünler, fiyatlar, kullanıcılar, firma ve hukuki metinler temsili demo içeriğidir; gerçek ticari veri veya geçerli hizmet bilgisi değildir. Uygulama ödeme veya cari hesap sistemi değildir.
 
 ## Arayüzden görüntüler
 
@@ -235,9 +237,9 @@ Users, DealerGroups, Categories, Products, Carts, CartItems, Orders, OrderItems,
 
 Sipariş, stok düşümü, stok hareketi ve sepet temizliği tek transaction içindedir; biri başarısızsa tümü geri alınır. Red iadesi ile yönetici olayı da sipariş durumuyla aynı transaction'dadır. Aynı sipariş isteğinin tekrarı ikinci sipariş veya stok hareketi oluşturmaz. Eski yönetici ürün formu güncel stoğu ezemez. Bayi yalnız kendi siparişlerini görür; yönetim API'leri ve salt okunur işlem geçmişi Admin rolü ister. Parola/hash, cookie ve token değerleri işlem geçmişine yazılmaz. Parolalar hash'lenir. Cookie HttpOnly/SameSite, değiştirici işlemlerde CSRF, giriş/kayıt, katalog arama, sepet/sipariş yazmaları ve görsel yüklemede hız sınırı ve SQL sorgularında parametreleme kullanılır.
 
-## Gerçek yayına geçiş sınırı
+## Demo kapsamı ve gerçek yayına geçiş sınırı
 
-Uygulama varsayılan olarak yerel geliştirme ortamına göre yapılandırılmıştır. İnternette gerçek müşterilere açmadan önce gerçek firma, destek, ürün/fiyat/stok ve onaylı hukuki metinler hazırlanmalı; ayrı güçlü parolalı Production yöneticisi kurulmalı; HTTPS, `AllowedHosts`, kalıcı Data Protection anahtarları, `wwwroot/uploads` kalıcılığı ve yedek/geri yükleme ayarlanmalıdır. Production ortamında demo kullanıcılar oluşturulmaz. Ödeme, ERP/cari hesap, e-posta, kargo ve fatura entegrasyonları yoktur. Uygulama kart bilgisi toplamaz veya tahsilat yapmaz.
+Bu depo için üretim yayını planlanmamış ve doğrulanmamıştır. Yerel demo ayarları veya geliştirme hesaplarıyla uygulamayı internete açmayın. Gerçek kullanım ayrı bir ürün ve güvenlik çalışması gerektirir: gerçek firma, destek, ürün/fiyat/stok ve onaylı hukuki metinler; güçlü parolalı Production yöneticisi; HTTPS, `AllowedHosts`, kalıcı Data Protection anahtarları, yüklenen dosyaların kalıcılığı ve sınanmış yedek/geri yükleme gerekir. Production ortamında demo kullanıcılar oluşturulmaz; bu, tek başına üretime hazır olduğu anlamına gelmez. Ödeme, ERP/cari hesap, e-posta, kargo ve fatura entegrasyonları yoktur. Uygulama kart bilgisi toplamaz veya tahsilat yapmaz.
 
 12 katalog fotoğrafı temsili gerçek görsellerdir; belirli U1 ürünlerini göstermez. Eser sahibi, kaynak ve lisans bağlantıları uygulama altındaki **Görsel kaynakları** sayfasında ve `src/U1.Business/wwwroot/image-credits.html` dosyasındadır. Bu sayfayı görsellerle birlikte koruyun. U1 geometrik işareti proje için oluşturulmuştur.
 
